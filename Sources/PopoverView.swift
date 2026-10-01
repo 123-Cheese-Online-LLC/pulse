@@ -120,7 +120,7 @@ struct PopoverView: View {
                     if model.selectedMetric == metric { SelectedPulse(color: cpu ? .teal : .blue) }
                 }.foregroundStyle(.secondary)
                 Text(value).font(.system(size: 24, weight: .medium)).monospacedDigit()
-                Sparkline(values: values, isCPU: cpu).frame(height: compact ? 32 : 44)
+                Sparkline(values: values, isCPU: cpu, replay: model.panelOpens).frame(height: compact ? 32 : 44)
                 Text(cpu ? "Whole CPU · last 2 min" : "Pressure: \(model.pressureText)")
                     .font(.system(size: 9)).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -171,19 +171,26 @@ struct PopoverView: View {
                     .resizable().frame(width: 22, height: 22)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(provider.name).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
-                    Text(provider.valueText).font(.system(size: 11, weight: .medium)).monospacedDigit().lineLimit(1)
+                    // The caption names the limit behind the number, e.g. "83% 5h".
+                    (Text(provider.valueText).font(.system(size: 11, weight: .medium))
+                     + Text(provider.valueCaption.map { " " + $0 } ?? "").font(.system(size: 9)).foregroundColor(.secondary))
+                        .monospacedDigit().lineLimit(1)
                 }
                 Spacer(minLength: 0)
             }
             .padding(5).frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.primary.opacity(isPinned ? 0.09 : 0.03), in: RoundedRectangle(cornerRadius: 7))
             .overlay(alignment: .topTrailing) {
-                if isPinned { Image(systemName: "pin.fill").font(.system(size: 7)).foregroundStyle(.secondary).padding(4) }
+                if isPinned {
+                    Image(systemName: "pin.fill").font(.system(size: 7)).foregroundStyle(.secondary).padding(4)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.2).combined(with: .opacity))
+                }
             }
+            .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.45), value: isPinned)
             .contentShape(Rectangle())
         }.buttonStyle(.plain)
          .help(provider.summary + (isPinned ? "\nClick to unpin from the menu bar" : model.pinned.count < 3 ? "\nClick to pin to the menu bar" : "\nUnpin another tool to pin this one (max 3)"))
-         .accessibilityLabel("\(provider.name), \(provider.valueText). \(isPinned ? "Pinned" : "Not pinned")")
+         .accessibilityLabel("\(provider.name), \(provider.valueText) \(provider.valueCaption ?? ""). \(isPinned ? "Pinned" : "Not pinned")")
     }
 
     private var addTile: some View {
@@ -332,6 +339,7 @@ private struct RowButtonStyle: ButtonStyle {
 private struct Sparkline: View {
     let values: [Double]
     let isCPU: Bool
+    var replay = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var progress: CGFloat = 0
     private var color: Color { isCPU ? ((values.last ?? 0) >= 85 ? .orange : .teal) : .blue }
@@ -343,6 +351,12 @@ private struct Sparkline: View {
         .font(.system(size: 8)).monospacedDigit().foregroundStyle(.secondary)
         .onAppear { draw() }
         .onChange(of: values.isEmpty) { _, empty in if !empty { draw() } }
+        // The panel is reused between opens, so redraw the line each time it opens.
+        .onChange(of: replay) { _, _ in
+            guard !reduceMotion else { return }
+            progress = 0
+            DispatchQueue.main.async { draw() }
+        }
         .onChange(of: reduceMotion) { _, reduce in if reduce { progress = 1 } }
     }
     /// Scale labels sitting on the 100 / 50 / 0 gridlines.

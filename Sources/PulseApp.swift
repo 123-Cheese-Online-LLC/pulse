@@ -216,6 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.setFrame(frame, display: true)
         NSApplication.shared.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        model.panelOpens += 1
     }
 
     private func buildPanelContent(_ size: CGSize) {

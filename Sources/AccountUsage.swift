@@ -49,8 +49,13 @@ struct ProviderUsage: Identifiable {
     var valueText: String {
         if let limiting { return "\(Int(limiting.usedPercent))%" }
         if let spend { return String(format: "$%.2f", spend.usd) }
-        if let localTokens { return "\(compactTokens(localTokens.fiveHourTokens))/5h" }
+        if let localTokens { return compactTokens(localTokens.fiveHourTokens) }
         return "—"
+    }
+    /// Which limit the tile's % refers to, e.g. "5h" or "week".
+    var valueCaption: String? {
+        guard let label = limiting?.label else { return spend == nil && localTokens == nil ? nil : spend == nil ? "tok 5h" : "month" }
+        return ["5 hour": "5h", "Weekly": "week", "Weekly Opus": "Opus wk", "Weekly Sonnet": "Sonnet wk"][label] ?? label.lowercased()
     }
     /// One-line reading when there's no % to show.
     var detailText: String? {

@@ -11,6 +11,7 @@ final class MonitorModel: ObservableObject {
     @Published var memoryHistory = History()
     @Published var selectedMetric: Metric = .cpu
     @Published var selectedAppID: String?
+    @Published var panelOpens = 0 // Bumped on each open so charts replay their draw-in.
     @Published var message: String? { didSet { if message == nil { stuckApp = nil } } }
     @Published var stuckApp: AppUsage? // Set when a normal quit didn't work; the message offers Force Quit.
     @Published var loginEnabled = SMAppService.mainApp.status == .enabled
