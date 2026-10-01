@@ -120,7 +120,7 @@ struct PopoverView: View {
                     if model.selectedMetric == metric { SelectedPulse(color: cpu ? .teal : .blue) }
                 }.foregroundStyle(.secondary)
                 Text(value).font(.system(size: 24, weight: .medium)).monospacedDigit()
-                Sparkline(values: values, isCPU: cpu, replay: model.panelOpens).frame(height: compact ? 32 : 44)
+                Sparkline(values: values, isCPU: cpu, replay: model.panelOpens).id(model.panelOpens).frame(height: compact ? 32 : 44)
                 Text(cpu ? "Whole CPU · last 2 min" : "Pressure: \(model.pressureText)")
                     .font(.system(size: 9)).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())

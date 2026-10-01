@@ -198,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Back-easing: in overshoots to ~1.1 then settles; out pops a touch then shrinks to nothing.
     private func dialScale(_ id: String) -> CGFloat {
         guard let motion = dialMotion[id] else { return 1 }
-        let duration = motion.appearing ? 0.32 : 0.22
+        let duration = motion.appearing ? 0.45 : 0.30
         let t = min(1, Date().timeIntervalSince(motion.start) / duration)
         let c1 = 1.7, c3 = c1 + 1
         let scale = motion.appearing ? 1 + c3 * pow(t - 1, 3) + c1 * pow(t - 1, 2) : 1 - (c3 * t * t * t - c1 * t * t)
