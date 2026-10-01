@@ -20,6 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var captureStarted = false
     private var outsideClick: Any?
     private let hoverTracker = HoverTracker()
+    // Pin/unpin bounce for menu bar dials: ids animating in or out, with their start time.
+    private var shownDials: [String] = []
+    private var dialMotion: [String: (start: Date, appearing: Bool)] = [:]
+    private var dialTimer: Timer?
+    private var drewDials = false
     private var hoverPanel: NSPanel!
     private var hoverWork: DispatchWorkItem?
 
@@ -115,10 +120,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func updateStatus() {
         let providers = model.accountUsage
         // Pinned tools (max 3) become dials; everything after them shifts to fit.
-        let dials = model.pinned.prefix(3).map { id in
-            providerDial(id, used: providers.first(where: { $0.id == id })?.limiting?.usedPercent)
+        let pinned = Array(model.pinned.prefix(3))
+        trackPinChanges(pinned)
+        let slots = shownDials.map { id in (id: id, scale: dialScale(id)) }
+        let dials = slots.map { slot in
+            (image: providerDial(slot.id, used: providers.first(where: { $0.id == slot.id })?.limiting?.usedPercent), scale: slot.scale)
         }
-        let start = CGFloat(dials.count * 28) + (dials.isEmpty ? 0 : 2)
+        // A dial's slot grows and shrinks with it, so neighbours slide rather than jump.
+        let dialsWidth = dials.reduce(CGFloat(0)) { $0 + 28 * min(1, $1.scale) }
+        let start = dialsWidth + (dialsWidth > 0.5 ? 2 : 0)
         let graph = menuGraph(isCPU: model.menuMetric == .cpu)
         let memoryGraph = menuGraph(isCPU: false)
         let title = model.menuTitle
@@ -131,7 +141,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let width = ceil(both ? memoryX + 37 + second.size(withAttributes: attributes).width : start + 37 + first.size(withAttributes: attributes).width) + 2
         statusItem.length = width + 8
         let image = NSImage(size: NSSize(width: width, height: 24), flipped: false) { _ in
-            for (index, dial) in dials.enumerated() { dial.draw(in: NSRect(x: CGFloat(index * 28), y: 0, width: 24, height: 24)) }
+            var x: CGFloat = 0
+            for dial in dials {
+                let size = 24 * dial.scale
+                if size > 0.5 { dial.image.draw(in: NSRect(x: x + 12 * min(1, dial.scale) - size / 2, y: 12 - size / 2, width: size, height: size)) }
+                x += 28 * min(1, dial.scale)
+            }
             graph.draw(in: NSRect(x: start, y: 3, width: 32, height: 18))
             first.draw(at: NSPoint(x: start + 37, y: 5), withAttributes: attributes)
             if both {
@@ -147,6 +162,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The hover card replaces the slow system tooltip; VoiceOver still gets the summary.
         statusItem.button?.setAccessibilityLabel(summary)
         if hoverPanel?.isVisible == true { showHoverCard() }
+    }
+
+    /// Starts an in/out bounce for any dial whose pin changed, and keeps leaving dials drawn until they're gone.
+    private func trackPinChanges(_ pinned: [String]) {
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let added = pinned.filter { !shownDials.contains($0) }
+        let removed = shownDials.filter { !pinned.contains($0) && dialMotion[$0]?.appearing != false }
+        if !drewDials { drewDials = true; shownDials = pinned; return } // first draw at launch: no bounce
+        for id in added { dialMotion[id] = still ? nil : (Date(), true) }
+        // Re-pinned while still leaving: turn around and bounce back in.
+        for id in pinned where dialMotion[id]?.appearing == false { dialMotion[id] = (Date(), true) }
+        for id in removed { if still { shownDials.removeAll { $0 == id } } else { dialMotion[id] = (Date(), false) } }
+        // Keep pinned order, with leaving dials staying where they were.
+        var order = shownDials.filter { pinned.contains($0) || dialMotion[$0]?.appearing == false }
+        for id in pinned where !order.contains(id) { order.insert(id, at: min(pinned.firstIndex(of: id) ?? order.count, order.count)) }
+        shownDials = order
+        if !dialMotion.isEmpty && dialTimer == nil {
+            // Redraw only while something is moving (~0.4 s), then stop.
+            dialTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateStatus() }
+            }
+        }
+    }
+
+    /// Back-easing: in overshoots to ~1.1 then settles; out pops a touch then shrinks to nothing.
+    private func dialScale(_ id: String) -> CGFloat {
+        guard let motion = dialMotion[id] else { return 1 }
+        let duration = motion.appearing ? 0.42 : 0.28
+        let t = min(1, Date().timeIntervalSince(motion.start) / duration)
+        let c1 = 1.7, c3 = c1 + 1
+        let scale = motion.appearing ? 1 + c3 * pow(t - 1, 3) + c1 * pow(t - 1, 2) : 1 - (c3 * t * t * t - c1 * t * t)
+        if t >= 1 {
+            dialMotion[id] = nil
+            if !motion.appearing { shownDials.removeAll { $0 == id } }
+            if dialMotion.isEmpty { dialTimer?.invalidate(); dialTimer = nil }
+            return motion.appearing ? 1 : 0
+        }
+        return max(0, CGFloat(scale))
     }
 
     private func hover(_ inside: Bool) {

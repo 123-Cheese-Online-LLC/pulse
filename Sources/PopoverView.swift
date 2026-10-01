@@ -188,6 +188,14 @@ struct PopoverView: View {
             }
             .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.45), value: isPinned)
             .contentShape(Rectangle())
+            // A small bounce whenever this tile is pinned or unpinned.
+            .keyframeAnimator(initialValue: 1.0, trigger: isPinned) { content, scale in
+                content.scaleEffect(reduceMotion ? 1 : scale)
+            } keyframes: { _ in
+                SpringKeyframe(0.93, duration: 0.09)
+                SpringKeyframe(1.04, duration: 0.14, spring: .bouncy)
+                SpringKeyframe(1.0, duration: 0.2, spring: .smooth)
+            }
         }.buttonStyle(.plain)
          .help(provider.summary + (isPinned ? "\nClick to unpin from the menu bar" : model.pinned.count < 3 ? "\nClick to pin to the menu bar" : "\nUnpin another tool to pin this one (max 3)"))
          .accessibilityLabel("\(provider.name), \(provider.valueText) \(provider.valueCaption ?? ""). \(isPinned ? "Pinned" : "Not pinned")")
