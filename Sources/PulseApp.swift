@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dialMotion: [String: (start: Date, appearing: Bool)] = [:]
     private var dialTimer: Timer?
     private var drewDials = false
+    private var statusWidth: CGFloat = 0
     private var hoverPanel: NSPanel!
     private var hoverWork: DispatchWorkItem?
 
@@ -117,7 +118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func updateStatus() {
+    /// frameOnly: an animation frame. Redraw the image and nothing else (no hover card, no accessibility text).
+    func updateStatus(frameOnly: Bool = false) {
         let providers = model.accountUsage
         // Pinned tools (max 3) become dials; everything after them shifts to fit.
         let pinned = Array(model.pinned.prefix(3))
@@ -139,8 +141,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Lay the memory readout right after the CPU text instead of at a fixed x, so there's no gap.
         let memoryX = start + 37 + first.size(withAttributes: attributes).width + 8
         let width = ceil(both ? memoryX + 37 + second.size(withAttributes: attributes).width : start + 37 + first.size(withAttributes: attributes).width) + 2
-        statusItem.length = width + 8
-        let image = NSImage(size: NSSize(width: width, height: 24), flipped: false) { _ in
+        // While dials move, keep the item at its widest so the menu bar never re-lays out mid-animation;
+        // content is right-aligned in that space, so the CPU readout stays put and only the dial moves.
+        let fullWidth = width + CGFloat(shownDials.count) * 28 - dialsWidth + (dialsWidth > 0.5 || shownDials.isEmpty ? 0 : 2)
+        let itemWidth = dialMotion.isEmpty ? width : max(width, ceil(fullWidth), statusWidth)
+        if itemWidth != statusWidth { statusItem.length = itemWidth + 8; statusWidth = itemWidth }
+        let offset = itemWidth - width
+        let image = NSImage(size: NSSize(width: itemWidth, height: 24), flipped: false) { _ in
+            NSGraphicsContext.current?.cgContext.translateBy(x: offset, y: 0)
             var x: CGFloat = 0
             for dial in dials {
                 let size = 24 * dial.scale
@@ -158,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         image.isTemplate = false
         statusItem.button?.title = ""
         statusItem.button?.image = image
+        if frameOnly { return }
         let summary = (["Pulse · " + title] + providers.map(\.summary)).joined(separator: "\n")
         // The hover card replaces the slow system tooltip; VoiceOver still gets the summary.
         statusItem.button?.setAccessibilityLabel(summary)
@@ -181,7 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !dialMotion.isEmpty && dialTimer == nil {
             // Redraw only while something is moving (~0.4 s), then stop.
             dialTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.updateStatus() }
+                MainActor.assumeIsolated { self?.updateStatus(frameOnly: true) }
             }
         }
     }
@@ -189,14 +198,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Back-easing: in overshoots to ~1.1 then settles; out pops a touch then shrinks to nothing.
     private func dialScale(_ id: String) -> CGFloat {
         guard let motion = dialMotion[id] else { return 1 }
-        let duration = motion.appearing ? 0.42 : 0.28
+        let duration = motion.appearing ? 0.32 : 0.22
         let t = min(1, Date().timeIntervalSince(motion.start) / duration)
         let c1 = 1.7, c3 = c1 + 1
         let scale = motion.appearing ? 1 + c3 * pow(t - 1, 3) + c1 * pow(t - 1, 2) : 1 - (c3 * t * t * t - c1 * t * t)
         if t >= 1 {
             dialMotion[id] = nil
             if !motion.appearing { shownDials.removeAll { $0 == id } }
-            if dialMotion.isEmpty { dialTimer?.invalidate(); dialTimer = nil }
+            if dialMotion.isEmpty {
+                dialTimer?.invalidate(); dialTimer = nil
+                DispatchQueue.main.async { [weak self] in self?.updateStatus() } // settle to the final width once
+            }
             return motion.appearing ? 1 : 0
         }
         return max(0, CGFloat(scale))

@@ -49,12 +49,12 @@ struct ProviderUsage: Identifiable {
     var valueText: String {
         if let limiting { return "\(Int(limiting.usedPercent))%" }
         if let spend { return String(format: "$%.2f", spend.usd) }
-        if let localTokens { return compactTokens(localTokens.fiveHourTokens) }
+        if let localTokens { return "\(compactTokens(localTokens.fiveHourTokens))/5h" }
         return "—"
     }
     /// Which limit the tile's % refers to, e.g. "5h" or "week".
     var valueCaption: String? {
-        guard let label = limiting?.label else { return spend == nil && localTokens == nil ? nil : spend == nil ? "tok 5h" : "month" }
+        guard let label = limiting?.label else { return spend == nil && localTokens == nil ? nil : spend == nil ? nil : "month" }
         return ["5 hour": "5h", "Weekly": "week", "Weekly Opus": "Opus wk", "Weekly Sonnet": "Sonnet wk"][label] ?? label.lowercased()
     }
     /// One-line reading when there's no % to show.
@@ -106,10 +106,17 @@ final class AccountUsage {
     /// Opens Terminal to sign Claude Code in; Pulse reads exact limits once that login exists.
     func connectClaude() {
         let script = Self.directory.appendingPathComponent("connect-claude.command")
+        // Several copies of `claude` can be installed and old ones may crash; use the newest that runs.
         let body = """
         #!/bin/zsh -l
-        command -v claude >/dev/null || { echo "Claude Code isn't installed. Get it at https://claude.com/claude-code"; exit 1; }
-        claude auth login && echo "\nDone. Pulse will show exact Claude limits within a minute. You can close this window."
+        best=""; bestv=""
+        for c in $(whence -ap claude) ~/.nvm/versions/node/*/bin/claude(N) ~/.local/bin/claude(N) /opt/homebrew/bin/claude(N); do
+          v=$("$c" --version 2>/dev/null | awk '{print $1}') || continue
+          [[ -n "$v" && "$(printf '%s\\n%s\\n' "$bestv" "$v" | sort -V | tail -1)" == "$v" ]] && { best=$c; bestv=$v; }
+        done
+        [[ -n "$best" ]] || { echo "Claude Code isn't installed. Get it at https://claude.com/claude-code"; exit 1; }
+        echo "using Claude Code $bestv"
+        "$best" auth login && echo "\nDone. Pulse will show exact Claude limits within a minute. You can close this window."
         """
         try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         guard (try? body.write(to: script, atomically: true, encoding: .utf8)) != nil,

@@ -69,9 +69,16 @@ ok "installed to ~/Applications/Pulse.app"
 
 # 3. Claude: exact limits need a Claude Code login; without one Pulse shows tokens used instead.
 section "connecting ai tools"
-if command -v claude >/dev/null 2>&1; then
+# Several copies of `claude` can be installed and old ones may crash; use the newest that runs.
+claude_bin=""; claude_v=""
+for c in $(type -ap claude) ~/.nvm/versions/node/*/bin/claude ~/.local/bin/claude /opt/homebrew/bin/claude; do
+  [[ -x "$c" ]] || continue
+  v=$("$c" --version 2>/dev/null | awk '{print $1}') || continue
+  [[ -n "$v" && "$(printf '%s\n%s\n' "$claude_v" "$v" | sort -V | tail -1)" == "$v" ]] && { claude_bin=$c; claude_v=$v; }
+done
+if [[ -n "$claude_bin" ]]; then
   if ask "connect Claude for exact 5-hour and weekly limits? [Y/n]" y; then
-    claude auth login && ok "claude connected" || note "sign-in didn't finish. connect later from Pulse (Connect next to Claude)."
+    "$claude_bin" auth login && ok "claude connected" || note "sign-in didn't finish. connect later from Pulse (Connect next to Claude)."
   else
     note "skipped. Pulse shows Claude tokens used until you connect."
   fi
