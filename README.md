@@ -39,7 +39,7 @@ To update later, run the same installer again from the `pulse` folder after `git
   - CPU and memory over the last 2 minutes. Click a chart to rank apps by that metric.
   - AI tiles, one per connected tool. A tile shows the limit closest to running out, e.g. `84% 5h`. **Click a tile to pin it** to the menu bar (max three).
   - **+ Add** to track OpenAI or Anthropic API spend with an admin key.
-  - Apps using the most, with **Show app**, **Quit** and **Force Quit**.
+  - Apps using the most, with **Show app**, **Quit** and **Force Quit**. Finder offers **Relaunch Finder**. Background processes can be stopped when they run under your account; system processes and ones your login session depends on stay protected.
 - **•••** menu: menu bar readout, Launch at login, Quit Pulse.
 
 ## AI tools

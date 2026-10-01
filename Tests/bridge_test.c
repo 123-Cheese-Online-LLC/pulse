@@ -1,3 +1,5 @@
+#include <sys/wait.h>
+#include <signal.h>
 #include "../Sources/MonitorBridge.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -59,5 +61,20 @@ int main(void) {
     pulse_host(&host);
     if (!host.cpu_valid || !host.memory_valid || host.memory_used > host.memory_total) return 1;
     puts("Native CPU conversion and host metrics checks passed");
+
+    // Ownership gates what Pulse may stop: self is ours, launchd is root's, a dead pid is gone,
+    // and a child we start can be signalled and then reads as gone.
+    uint64_t own_start = 0;
+    if (pulse_owner(getpid(), &own_start) != (int)getuid() || !own_start) { puts("FAIL: own process owner"); return 1; }
+    // launchd is root's; macOS may not even let us read it. Either way it must never look like ours.
+    if (pulse_owner(1, NULL) == (int)getuid()) { puts("FAIL: launchd must never read as ours"); return 1; }
+    if (pulse_owner(999999, NULL) != -1) { puts("FAIL: missing pid must read as gone"); return 1; }
+    pid_t child = fork();
+    if (child == 0) { execl("/bin/sleep", "sleep", "30", (char *)NULL); _exit(127); }
+    if (pulse_owner(child, NULL) != (int)getuid() || kill(child, SIGTERM) != 0) { puts("FAIL: stop own child"); return 1; }
+    int status = 0;
+    waitpid(child, &status, 0);
+    if (!WIFSIGNALED(status) || pulse_owner(child, NULL) != -1) { puts("FAIL: stopped child must be gone"); return 1; }
+    puts("Process ownership checks passed");
     return 0;
 }

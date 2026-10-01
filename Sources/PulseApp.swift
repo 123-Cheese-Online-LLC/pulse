@@ -77,8 +77,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             captureStarted = true
             let path = CommandLine.arguments[index + 1]
             // --detail captures the busiest quittable app's detail view instead of the list.
-            if CommandLine.arguments.contains("--detail") {
-                model.selectedAppID = model.snapshot?.apps.sorted { $0.cpu > $1.cpu }.first { model.canQuit($0) }?.id
+            // --detail [name]: capture that app's detail card (default: the busiest quittable app).
+            if let flag = CommandLine.arguments.firstIndex(of: "--detail") {
+                let name = CommandLine.arguments.dropFirst(flag + 1).first.flatMap { $0.hasPrefix("-") ? nil : $0 }
+                let apps = model.snapshot?.apps.sorted { $0.cpu > $1.cpu } ?? []
+                model.selectedAppID = (name.flatMap { n in apps.first { $0.name == n } } ?? apps.first { model.canQuit($0) })?.id
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 guard let view = self.panel.contentView,

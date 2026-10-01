@@ -141,23 +141,81 @@ final class MonitorModel: ObservableObject {
     }
     func connectClaude() { accounts.connectClaude() }
     func openApp(_ usage: AppUsage) { runningApp(for: usage)?.activate() }
+    /// What stopping this row would do. Apps quit normally, Finder relaunches, and background
+    /// processes can be stopped only when they're yours and not part of the login session.
+    enum StopAction: Equatable { case app, relaunchFinder, process, blocked(String) }
+    /// Your own processes that the session depends on: stopping them logs you out, freezes input,
+    /// or loses settings, even though macOS would restart some of them.
+    private static let sessionCritical: Set<String> = ["loginwindow", "WindowServer", "launchd", "kernel_task", "logd", "UserEventAgent",
+                                                       "backboardd", "cfprefsd", "distnoted", "secd", "trustd", "lsd", "coreservicesd"]
+    func stopAction(_ usage: AppUsage) -> StopAction {
+        if let app = runningApp(for: usage) {
+            if app.processIdentifier == getpid() { return .blocked("Use ••• → Quit Pulse") }
+            return app.bundleIdentifier == "com.apple.finder" ? .relaunchFinder : .app
+        }
+        if Self.sessionCritical.contains(usage.name) { return .blocked("macOS needs \(usage.name) for your session · stopping it could log you out or freeze input") }
+        if usage.pids.contains(getpid()) { return .blocked("Use ••• → Quit Pulse") }
+        for pid in usage.pids {
+            let owner = pulse_owner(pid, nil)
+            // Unreadable means gone, or a process macOS won't even let us inspect (always someone else's).
+            if owner < 0 { return kill(pid, 0) == 0 || errno == EPERM ? .blocked("System process · macOS protects it") : .blocked("It has already exited") }
+            if owner != Int32(getuid()) { return .blocked("System process · macOS protects it") }
+        }
+        return usage.pids.isEmpty ? .blocked("Nothing to stop") : .process
+    }
+    /// Signals each process, re-checking right before that the pid is still ours and, when the row
+    /// recorded a start time, still the same process (pids get reused).
+    private func signal(_ usage: AppUsage, _ sig: Int32) -> Bool {
+        let recordedStart = usage.id.hasPrefix("pid:") ? UInt64(usage.id.split(separator: ":").last ?? "") : nil
+        var sent = false
+        for pid in usage.pids {
+            var start: UInt64 = 0
+            guard pulse_owner(pid, &start) == Int32(getuid()), recordedStart == nil || recordedStart == start else { continue }
+            if kill(pid, sig) == 0 { sent = true }
+        }
+        return sent
+    }
+    private func alive(_ usage: AppUsage) -> Bool { usage.pids.contains { pulse_owner($0, nil) == Int32(getuid()) } }
+
     func quit(_ usage: AppUsage) {
-        guard canQuit(usage), let app = runningApp(for: usage) else { return }
         stuckApp = nil
-        guard app.terminate() else { stuckApp = usage; message = "\(usage.name) didn’t accept the quit request."; return }
-        message = "Quit requested. The app may ask you to save your work."
-        // A frozen or busy app can ignore a normal quit; offer Force Quit if it is still alive.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            guard let self, !app.isTerminated else { return }
-            self.stuckApp = usage
-            self.message = "\(usage.name) is still running."
+        switch stopAction(usage) {
+        case .app:
+            guard let app = runningApp(for: usage) else { return }
+            guard app.terminate() else { stuckApp = usage; message = "\(usage.name) didn’t accept the quit request."; return }
+            message = "Quit requested. The app may ask you to save your work."
+            // A frozen or busy app can ignore a normal quit; offer Force Quit if it is still alive.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self, !app.isTerminated else { return }
+                self.stuckApp = usage
+                self.message = "\(usage.name) is still running."
+            }
+        case .relaunchFinder:
+            message = runningApp(for: usage)?.forceTerminate() == true ? "Finder is relaunching." : "Finder couldn’t be relaunched. Try Activity Monitor."
+        case .process:
+            guard signal(usage, SIGTERM) else { message = "\(usage.name) had already exited."; return }
+            message = "Asked \(usage.name) to stop."
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self, self.alive(usage) else { return }
+                self.stuckApp = usage
+                self.message = "\(usage.name) is still running."
+            }
+        case .blocked(let reason):
+            message = reason
         }
     }
     /// Immediate termination, like Activity Monitor's Force Quit. Unsaved work is lost.
     func forceQuit(_ usage: AppUsage) {
-        guard canQuit(usage), let app = runningApp(for: usage) else { return }
         stuckApp = nil
-        message = app.forceTerminate() ? "\(usage.name) was force quit." : "\(usage.name) couldn’t be force quit. Try Activity Monitor."
+        switch stopAction(usage) {
+        case .app, .relaunchFinder:
+            guard let app = runningApp(for: usage) else { return }
+            message = app.forceTerminate() ? "\(usage.name) was force quit." : "\(usage.name) couldn’t be force quit. Try Activity Monitor."
+        case .process:
+            message = signal(usage, SIGKILL) ? "\(usage.name) was force quit." : "\(usage.name) had already exited."
+        case .blocked(let reason):
+            message = reason
+        }
     }
     func openActivityMonitor() {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.ActivityMonitor") else {

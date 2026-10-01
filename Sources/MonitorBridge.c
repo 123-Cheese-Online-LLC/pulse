@@ -88,3 +88,10 @@ int pulse_processes(PulseProcess *out, int capacity, int *skipped) {
     free(pids);
     return written;
 }
+
+int pulse_owner(int32_t pid, uint64_t *start) {
+    struct proc_bsdinfo info;
+    if (pid <= 0 || proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info)) return -1;
+    if (start) *start = info.pbi_start_tvsec * 1000000 + info.pbi_start_tvusec;
+    return (int)info.pbi_uid;
+}

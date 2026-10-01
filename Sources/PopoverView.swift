@@ -271,25 +271,37 @@ struct PopoverView: View {
                 .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
             if quitCandidate?.id == app.id {
                 // Inline confirm: alerts don't reliably appear over a borderless menu-bar panel.
+                let finder = model.stopAction(app) == .relaunchFinder
                 HStack {
-                    Text("Quit \(app.name)?").font(.system(size: 11, weight: .medium))
+                    Text(finder ? "Relaunch Finder?" : "Quit \(app.name)?").font(.system(size: 11, weight: .medium))
                     Spacer()
                     Button("Cancel") { quitCandidate = nil }.controlSize(.small)
-                    Button("Quit") { model.quit(app); quitCandidate = nil }.controlSize(.small)
-                    Button("Force Quit") { model.forceQuit(app); quitCandidate = nil }.controlSize(.small).tint(.red)
-                        .help("Stops it immediately. Unsaved work is lost.")
+                    if finder {
+                        Button("Relaunch") { model.quit(app); quitCandidate = nil }.controlSize(.small)
+                            .help("Finder quits and macOS opens it again. Your files aren't affected.")
+                    } else {
+                        Button("Quit") { model.quit(app); quitCandidate = nil }.controlSize(.small)
+                        Button("Force Quit") { model.forceQuit(app); quitCandidate = nil }.controlSize(.small).tint(.red)
+                            .help("Stops it immediately. Unsaved work is lost.")
+                    }
                 }
             } else {
             HStack {
                 if model.runningApp(for: app) != nil {
                     Button("Show app") { model.openApp(app) }.controlSize(.small)
                 }
-                // Always shown so it never looks missing; disabled with a reason when quitting isn't allowed.
-                Button("Quit \(app.name)…") { quitCandidate = app }.controlSize(.small)
-                    .disabled(!model.canQuit(app))
-                    .help(model.canQuit(app) ? "Ask \(app.name) to quit"
-                          : model.runningApp(for: app) == nil ? "Background process · inspect it in Activity Monitor"
-                          : "macOS keeps \(app.name) running, so Pulse can't quit it")
+                // Always shown so it never looks missing; disabled with the reason when stopping isn't safe.
+                let action = model.stopAction(app)
+                Button(action == .relaunchFinder ? "Relaunch Finder…" : "Quit \(app.name)…") { quitCandidate = app }.controlSize(.small)
+                    .disabled({ if case .blocked = action { return true }; return false }())
+                    .help({
+                        switch action {
+                        case .app: return "Ask \(app.name) to quit"
+                        case .relaunchFinder: return "Finder can't stay closed; this restarts it"
+                        case .process: return "Background process you own. Stopping it is safe; macOS restarts it if needed."
+                        case .blocked(let reason): return reason
+                        }
+                    }())
                 Spacer()
                 // Guidance stays one click away instead of always taking space.
                 Button { showTip.toggle() } label: {

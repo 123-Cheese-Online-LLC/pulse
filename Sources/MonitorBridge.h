@@ -13,4 +13,6 @@ typedef struct {
 } PulseProcess;
 void pulse_host(PulseHost *output);
 int pulse_processes(PulseProcess *output, int capacity, int *skipped);
+/* Owner uid of a live process (or -1 if gone/unreadable); start receives its start time, same units as PulseProcess.start. */
+int pulse_owner(int32_t pid, uint64_t *start);
 #endif
