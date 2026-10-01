@@ -179,7 +179,7 @@ def anthropic_api():
     if not key: return clear('anthropic-api')
     start=time.strftime('%Y-%m-%dT00:00:00Z',time.gmtime(month_start(time.time())))
     body=get_json(f'https://api.anthropic.com/v1/organizations/cost_report?starting_at={start}&limit=31',
-                  {'x-api-key':key,'anthropic-version':'2023-06-01','User-Agent':'Pulse (https://github.com/koz46/pulse)'})
+                  {'x-api-key':key,'anthropic-version':'2023-06-01','User-Agent':'Pulse (https://github.com/123-Cheese-Online-LLC/pulse)'})
     cents=sum(float(r.get('amount') or 0) for b in body.get('data',[]) for r in b.get('results',[]))
     save('anthropic-api',spend_record(cents/100))
 
