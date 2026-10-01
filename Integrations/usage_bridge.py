@@ -232,8 +232,9 @@ def gemini(now=None, root=None):
 
 PROVIDERS={'codex':codex,'claude':claude_refresh,'gemini':gemini,'copilot':copilot,'openai-api':openai_api,'anthropic-api':anthropic_api}
 
-def status():
-    """Self-test: run every provider and say what each one found. Prints no secrets."""
+def status(show_all=False):
+    """Self-test: run every provider and say what each one found. Prints no secrets.
+    Tools that aren't set up are hidden unless show_all (status -a)."""
     for name,job in PROVIDERS.items():
         try:
             with contextlib.redirect_stdout(io.StringIO()): job()
@@ -242,7 +243,9 @@ def status():
         try: d=json.loads((ROOT/(name+'-usage.json')).read_text())
         except (OSError,ValueError): d=None
         if err: line='error · '+err
-        elif not d: line='not set up'
+        elif not d:
+            if not show_all: continue
+            line='not set up'
         elif d.get('windows'): line=', '.join(f"{w['label']} {w['usedPercent']:.0f}%" for w in d['windows'])
         elif d.get('spend'): line=f"${d['spend']['usd']:.2f} this month"
         elif d.get('local'): line=f"{d['local']['fiveHourTokens']:,} tokens last 5h · {d['local']['weekTokens']:,} this week"
@@ -251,7 +254,7 @@ def status():
 
 if __name__=='__main__':
     mode=sys.argv[1] if len(sys.argv)>1 else ''
-    if mode=='status': status(); sys.exit()
+    if mode=='status': status('-a' in sys.argv or '--all' in sys.argv); sys.exit()
     # 'refresh' polls every provider; one failing must not block the others.
     jobs={'claude':[claude],'claude-api':[claude_refresh],'refresh':list(PROVIDERS.values())}.get(mode) or ([PROVIDERS[mode]] if mode in PROVIDERS else [])
     for job in jobs:

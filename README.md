@@ -55,7 +55,7 @@ Tools appear on their own once they're set up on the Mac. Nothing extra is downl
 | OpenAI API | $ this month | Costs API, admin key added in Pulse |
 | Anthropic API | $ this month | Cost API, admin key added in Pulse |
 
-Check what Pulse can read on your Mac (prints no keys or tokens):
+Check what Pulse can read on your Mac (prints no keys or tokens). Add `-a` to also list tools that aren't set up:
 
 ```sh
 /usr/bin/python3 ~/Applications/Pulse.app/Contents/Resources/usage_bridge.py status
