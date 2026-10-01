@@ -18,6 +18,15 @@ final class MonitorModel: ObservableObject {
     @Published var menuReadout: String = UserDefaults.standard.string(forKey: "menuReadout") ?? "cpu" {
         didSet { UserDefaults.standard.set(menuReadout, forKey: "menuReadout"); onUpdate?() }
     }
+    /// Up to three providers shown as dials in the menu bar.
+    @Published var pinned: [String] = UserDefaults.standard.stringArray(forKey: "pinnedProviders") ?? ["claude", "codex"] {
+        didSet { UserDefaults.standard.set(pinned, forKey: "pinnedProviders"); onUpdate?() }
+    }
+    func togglePin(_ id: String) {
+        if let index = pinned.firstIndex(of: id) { pinned.remove(at: index) }
+        else if pinned.count < 3 { pinned.append(id) }
+    }
+    func saveKey(_ provider: String, key: String) -> Bool { accounts.saveKey(provider, key: key) }
     var menuMetric: Metric { menuReadout == "memory" ? .memory : .cpu }
     var onUpdate: (() -> Void)?
     private let queue = DispatchQueue(label: "app.pulse.sampler", qos: .utility)

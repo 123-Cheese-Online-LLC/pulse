@@ -26,5 +26,22 @@ class UsageTests(unittest.TestCase):
             r=b.claude_local(now,d)
         # 'a' counted once (duplicate line), cache reads ignored, 'c' is older than 7 days.
         self.assertEqual(r,{'fiveHourTokens':20,'weekTokens':220})
+    def test_gemini_counts(self):
+        import json, os, tempfile
+        now=1790800000
+        def ts(h): return datetime.utcfromtimestamp(now-h*3600).isoformat()+'Z'
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(d+'/abc/chats')
+            msg=lambda i,h,inp,cached,out: {'id':i,'timestamp':ts(h),'type':'gemini','tokens':{'input':inp,'cached':cached,'output':out,'thoughts':1,'total':0}}
+            with open(d+'/abc/chats/session-1.jsonl','w') as f:
+                f.write('\n'.join(json.dumps(r) for r in [{'sessionId':'s'},msg('a',1,100,40,10),msg('a',1,100,40,20),
+                                                            {'$set':{'messages':[msg('b',6,50,0,5)]}},msg('c',300,999,0,999)])+'\n')
+            with open(d+'/abc/chats/session-2.json','w') as f: json.dump({'messages':[msg('d',2,10,0,0)]},f)
+            r=b.gemini(now,d)['local']
+        # a: latest record wins (60+20+1); b: 6h ago, week only (56); c: too old; d: legacy .json file (11).
+        self.assertEqual(r,{'fiveHourTokens':92,'weekTokens':148})
+    def test_month_start(self):
+        self.assertEqual(time.strftime('%Y-%m-%d %H:%M',time.gmtime(b.month_start(1790800000))),'2026-09-01 00:00')
+import time
 from datetime import datetime
 unittest.main()

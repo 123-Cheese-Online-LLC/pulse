@@ -12,12 +12,9 @@ struct UsageHoverCard: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(provider.name).font(.system(size: 11, weight: .semibold))
                     if provider.activeWindows.isEmpty {
-                        if let local = provider.localTokens {
-                            Text(local.text).font(.system(size: 10)).monospacedDigit()
-                        }
-                        // Unknown is never shown as 0%.
-                        Text(provider.record?.note ?? "No current reading")
-                            .font(.system(size: 9)).foregroundStyle(.secondary)
+                        // Spend or token counts when there's no %; unknown is never shown as 0%.
+                        Text(provider.detailText ?? "No current reading").font(.system(size: 10)).monospacedDigit()
+                            .foregroundStyle(provider.spend == nil && provider.localTokens == nil ? .secondary : .primary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     ForEach(provider.activeWindows, id: \.label) { window in row(window) }
@@ -53,10 +50,10 @@ struct UsageHoverCard: View {
 
     private func resetText(_ time: Double) -> String {
         let date = Date(timeIntervalSince1970: time)
-        // Today's resets need only the time; later ones get the weekday too.
-        return Calendar.current.isDateInToday(date)
-            ? date.formatted(date: .omitted, time: .shortened)
-            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        // Today: time only. This week: weekday + time. Further out: the date, so "Sat" isn't misread.
+        if Calendar.current.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
+        return date.timeIntervalSinceNow < 6 * 86400 ? date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            : date.formatted(.dateTime.month(.abbreviated).day())
     }
 }
 

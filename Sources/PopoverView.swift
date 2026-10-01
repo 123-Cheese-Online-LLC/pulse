@@ -8,6 +8,7 @@ struct PopoverView: View {
     @State private var quitCandidate: AppUsage?
     @State private var showInfo = false
     @State private var showTip = false
+    @State private var showAddKeys = false
     @AppStorage("claudeOnboardingDone") private var claudeOnboardingDone = false
     private var claudeNeedsConnect: Bool { model.accountUsage.first { $0.id == "claude" }?.limiting == nil }
     @AppStorage("panelPinned") private var panelPinned = true
@@ -149,23 +150,51 @@ struct PopoverView: View {
          .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
     }
 
+    /// Every connected AI tool as a tile; tap to pin up to three to the menu bar.
     private var accountSummary: some View {
-        HStack(spacing: 16) {
-            ForEach(model.accountUsage) { provider in
-                HStack(spacing: 5) {
-                    Image(nsImage: providerDial(provider.id, used: provider.limiting?.usedPercent))
-                        .resizable().frame(width: 24, height: 24)
-                    Text(provider.name).foregroundStyle(.secondary)
-                    Text(provider.limiting.map { "\(Int($0.usedPercent))%" }
-                         ?? provider.localTokens.map { "\(compactTokens($0.fiveHourTokens))/5h" } ?? "—").monospacedDigit()
-                    if provider.id == "claude" && provider.limiting == nil && claudeOnboardingDone {
-                        Button("Connect") { model.connectClaude() }.buttonStyle(.link).font(.system(size: 10))
-                            .help("Sign in Claude Code to show exact 5-hour and weekly limits")
-                    }
-                }.font(.system(size: 10)).help(provider.summary).accessibilityLabel(provider.summary)
+        VStack(alignment: .leading, spacing: 4) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                ForEach(model.accountUsage) { provider in providerTile(provider) }
+                addTile
             }
-            Spacer(minLength: 0)
+            if claudeNeedsConnect && claudeOnboardingDone {
+                Button("Connect Claude for exact %") { model.connectClaude() }.buttonStyle(.link).font(.system(size: 10))
+            }
         }.padding(.top, 2)
+    }
+
+    private func providerTile(_ provider: ProviderUsage) -> some View {
+        let isPinned = model.pinned.contains(provider.id)
+        return Button { model.togglePin(provider.id) } label: {
+            HStack(spacing: 5) {
+                Image(nsImage: providerDial(provider.id, used: provider.limiting?.usedPercent))
+                    .resizable().frame(width: 22, height: 22)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(provider.name).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(provider.valueText).font(.system(size: 11, weight: .medium)).monospacedDigit().lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(5).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(isPinned ? 0.09 : 0.03), in: RoundedRectangle(cornerRadius: 7))
+            .overlay(alignment: .topTrailing) {
+                if isPinned { Image(systemName: "pin.fill").font(.system(size: 7)).foregroundStyle(.secondary).padding(4) }
+            }
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+         .help(provider.summary + (isPinned ? "\nClick to unpin from the menu bar" : model.pinned.count < 3 ? "\nClick to pin to the menu bar" : "\nUnpin another tool to pin this one (max 3)"))
+         .accessibilityLabel("\(provider.name), \(provider.valueText). \(isPinned ? "Pinned" : "Not pinned")")
+    }
+
+    private var addTile: some View {
+        Button { showAddKeys.toggle() } label: {
+            Label("Add", systemImage: "plus").font(.system(size: 10)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 32)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 7))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+         .help("Add API spend tracking")
+         .popover(isPresented: $showAddKeys, arrowEdge: .bottom) { AddKeysView(model: model) }
     }
 
     private var needsAttention: Bool {
@@ -397,5 +426,32 @@ private struct PanelGlass: NSViewRepresentable {
         view.state = .active
         view.wantsLayer = true
         view.layer?.backgroundColor = reduceTransparency ? NSColor.windowBackgroundColor.cgColor : nil
+    }
+}
+
+/// Admin API keys for month-to-date spend. Gemini CLI, Copilot, Claude and Codex are detected automatically.
+private struct AddKeysView: View {
+    @ObservedObject var model: MonitorModel
+    @State private var openAI = ""
+    @State private var anthropic = ""
+    @State private var status: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Add AI usage").font(.system(size: 12, weight: .semibold))
+            Text("Claude Code, Codex, Gemini CLI and GitHub Copilot appear automatically when installed. For API spend this month, paste an admin key. Keys are stored in your Keychain.")
+                .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            SecureField("OpenAI admin key (sk-admin-…)", text: $openAI)
+            SecureField("Anthropic admin key (sk-ant-admin…)", text: $anthropic)
+            HStack {
+                if let status { Text(status).font(.system(size: 10)).foregroundStyle(.secondary) }
+                Spacer()
+                Button("Save") {
+                    // Only fields with something typed are saved; an untouched field keeps its existing key.
+                    let saved = [("openai", openAI), ("anthropic", anthropic)].filter { !$0.1.isEmpty }.map { model.saveKey($0.0, key: $0.1) }
+                    status = saved.isEmpty ? "Nothing to save" : saved.allSatisfy { $0 } ? "Saved · appears within a minute" : "That doesn't look like a key"
+                    openAI = ""; anthropic = ""
+                }.controlSize(.small).keyboardShortcut(.defaultAction)
+            }
+        }.textFieldStyle(.roundedBorder).font(.system(size: 11)).padding(12).frame(width: 260)
     }
 }

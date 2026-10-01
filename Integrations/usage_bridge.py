@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Read account limits only. Never starts a model turn or reads conversation content."""
-import json, math, os, pathlib, selectors, subprocess, sys, time, tempfile, urllib.request, urllib.error
+import contextlib, io, json, math, os, pathlib, selectors, subprocess, sys, time, tempfile, urllib.request, urllib.error
 from datetime import datetime
 ROOT = pathlib.Path.home() / 'Library/Application Support/Pulse'
 
@@ -145,10 +145,116 @@ def claude():
     parts=[f"{w['label']}: {w['usedPercent']:.0f}% used" for w in result['windows']]
     print('Pulse · '+(' | '.join(parts) if parts else 'usage not reported yet'))
 
+def clear(provider):
+    # A provider that isn't set up shouldn't leave an old tile behind.
+    try: (ROOT/(provider+'-usage.json')).unlink()
+    except FileNotFoundError: pass
+
+def keychain(service):
+    """Admin API key that Pulse saved in the Keychain (Pulse → Add)."""
+    out=subprocess.run(['/usr/bin/security','find-generic-password','-s',service,'-w'],capture_output=True,text=True,timeout=10)
+    return out.stdout.strip() if out.returncode==0 and out.stdout.strip() else None
+
+def month_start(now):
+    t=time.gmtime(now); return int(time.mktime((t.tm_year,t.tm_mon,1,0,0,0,0,0,0))-time.timezone)
+
+def spend_record(usd):
+    return {'updatedAt':time.time(),'windows':[],'spend':{'usd':round(usd,2),'label':'This month'}}
+
+def get_json(url,headers):
+    with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=20) as r: return json.load(r)
+
+def openai_api():
+    """Month-to-date spend from OpenAI's Costs API (admin key, amount.value is USD)."""
+    key=keychain('Pulse: openai-admin-key')
+    if not key: return clear('openai-api')
+    body=get_json(f'https://api.openai.com/v1/organization/costs?start_time={month_start(time.time())}&limit=31',
+                  {'Authorization':'Bearer '+key})
+    usd=sum(float((r.get('amount') or {}).get('value') or 0) for b in body.get('data',[]) for r in b.get('results',[]))
+    save('openai-api',spend_record(usd))
+
+def anthropic_api():
+    """Month-to-date spend from Anthropic's Cost API (admin key, amounts are cents as decimal strings)."""
+    key=keychain('Pulse: anthropic-admin-key')
+    if not key: return clear('anthropic-api')
+    start=time.strftime('%Y-%m-%dT00:00:00Z',time.gmtime(month_start(time.time())))
+    body=get_json(f'https://api.anthropic.com/v1/organizations/cost_report?starting_at={start}&limit=31',
+                  {'x-api-key':key,'anthropic-version':'2023-06-01','User-Agent':'Pulse (https://github.com/koz46/pulse)'})
+    cents=sum(float(r.get('amount') or 0) for b in body.get('data',[]) for r in b.get('results',[]))
+    save('anthropic-api',spend_record(cents/100))
+
+def copilot():
+    """Monthly chat/completions/premium quotas via the GitHub CLI's own login (unofficial endpoint)."""
+    gh=next((p for p in ['/opt/homebrew/bin/gh','/usr/local/bin/gh'] if os.access(p,os.X_OK)),None)
+    if not gh: return clear('copilot')
+    out=subprocess.run([gh,'api','/copilot_internal/user'],capture_output=True,text=True,timeout=20)
+    if out.returncode: return clear('copilot')
+    d=json.loads(out.stdout); reset=parse_time(d.get('quota_reset_date_utc')) or parse_time((d.get('quota_reset_date') or '')+'T00:00:00Z')
+    windows=[]
+    for key,label in [('premium_interactions','Premium'),('chat','Chat'),('completions','Completions')]:
+        q=(d.get('quota_snapshots') or {}).get(key) or {}
+        if q.get('unlimited') or not q.get('entitlement'): continue  # Skip quotas this plan doesn't have.
+        windows.append((label,{'usedPercent':100-float(q.get('percent_remaining',100)),'resetsAt':reset}))
+    save('copilot',normalize(windows))
+
+def gemini(now=None, root=None):
+    """Gemini CLI tokens in the last 5 hours / 7 days from its local session files (no login)."""
+    now,real=(time.time() if now is None else now),root is None
+    root=pathlib.Path.home()/'.gemini/tmp' if real else pathlib.Path(root)
+    if not root.is_dir(): return clear('gemini') if real else None
+    week_start,by_id=now-7*86400,{}
+    def take(m):
+        if isinstance(m,dict) and isinstance(m.get('tokens'),dict) and m.get('id'): by_id[m['id']]=m  # Later records win.
+    for f in list(root.glob('*/chats/*.json'))+list(root.glob('*/chats/*.jsonl')):
+        try:
+            if f.stat().st_mtime<week_start: continue
+            text=f.read_text(errors='ignore')
+        except OSError: continue
+        if f.suffix=='.json':
+            try: [take(m) for m in json.loads(text).get('messages',[])]
+            except (ValueError,AttributeError): pass
+            continue
+        for line in text.splitlines():
+            try: r=json.loads(line)
+            except ValueError: continue
+            if not isinstance(r,dict): continue
+            take(r); [take(m) for m in ((r.get('$set') or {}).get('messages') or r.get('messages') or [])]
+    five=week=0
+    for m in by_id.values():
+        t,k=parse_time(m.get('timestamp')),m['tokens']
+        if t is None or t<week_start: continue
+        # Same convention as Claude: fresh input + output + thinking; cached input excluded.
+        n=max(0,(k.get('input') or 0)-(k.get('cached') or 0))+(k.get('output') or 0)+(k.get('thoughts') or 0)
+        week+=n; five+=n if t>=now-5*3600 else 0
+    data={'updatedAt':time.time(),'windows':[],'local':{'fiveHourTokens':five,'weekTokens':week}}
+    if real: save('gemini',data)
+    return data
+
+PROVIDERS={'codex':codex,'claude':claude_refresh,'gemini':gemini,'copilot':copilot,'openai-api':openai_api,'anthropic-api':anthropic_api}
+
+def status():
+    """Self-test: run every provider and say what each one found. Prints no secrets."""
+    for name,job in PROVIDERS.items():
+        try:
+            with contextlib.redirect_stdout(io.StringIO()): job()
+            err=None
+        except Exception as e: err=type(e).__name__+(f' {e.code}' if hasattr(e,'code') else '')
+        try: d=json.loads((ROOT/(name+'-usage.json')).read_text())
+        except (OSError,ValueError): d=None
+        if err: line='error · '+err
+        elif not d: line='not set up'
+        elif d.get('windows'): line=', '.join(f"{w['label']} {w['usedPercent']:.0f}%" for w in d['windows'])
+        elif d.get('spend'): line=f"${d['spend']['usd']:.2f} this month"
+        elif d.get('local'): line=f"{d['local']['fiveHourTokens']:,} tokens last 5h · {d['local']['weekTokens']:,} this week"
+        else: line='no reading'
+        print(f'{name:14} {line}')
+
 if __name__=='__main__':
     mode=sys.argv[1] if len(sys.argv)>1 else ''
-    # 'refresh' polls both providers; one failing must not block the other.
-    for job in {'codex':[codex],'claude':[claude],'claude-api':[claude_refresh],'refresh':[codex,claude_refresh]}.get(mode,[]):
+    if mode=='status': status(); sys.exit()
+    # 'refresh' polls every provider; one failing must not block the others.
+    jobs={'claude':[claude],'claude-api':[claude_refresh],'refresh':list(PROVIDERS.values())}.get(mode) or ([PROVIDERS[mode]] if mode in PROVIDERS else [])
+    for job in jobs:
         try: job()
         except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError):
-            pass # Preserve the previous timestamp; never present a failure as zero usage.
+            pass # Preserve the previous reading; never present a failure as zero usage.

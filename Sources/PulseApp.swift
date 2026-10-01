@@ -92,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                        let png = rep.representation(using: .png, properties: [:]) {
                         try png.write(to: URL(fileURLWithPath: path + ".menubar.png"))
                     }
-                    let providers = ["claude", "codex"].map { id in self.model.accountUsage.first { $0.id == id } ?? ProviderUsage(id: id, record: nil) }
+                    let providers = self.model.accountUsage
                     let renderer = ImageRenderer(content: UsageHoverCard(providers: providers, machine: self.model.menuTitle))
                     renderer.scale = 2
                     if let hover = renderer.nsImage?.tiffRepresentation, let rep = NSBitmapImageRep(data: hover),
@@ -110,10 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateStatus() {
-        let providers = model.accountUsage.isEmpty ? [ProviderUsage(id: "codex", record: nil), ProviderUsage(id: "claude", record: nil)] : model.accountUsage
-        let dials = ["claude", "codex"].map { id in
+        let providers = model.accountUsage
+        // Pinned tools (max 3) become dials; everything after them shifts to fit.
+        let dials = model.pinned.prefix(3).map { id in
             providerDial(id, used: providers.first(where: { $0.id == id })?.limiting?.usedPercent)
         }
+        let start = CGFloat(dials.count * 28) + (dials.isEmpty ? 0 : 2)
         let graph = menuGraph(isCPU: model.menuMetric == .cpu)
         let memoryGraph = menuGraph(isCPU: false)
         let title = model.menuTitle
@@ -122,14 +124,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.labelColor]
         let first = (labels.first ?? title) as NSString, second = (labels.last ?? "MEM —") as NSString
         // Lay the memory readout right after the CPU text instead of at a fixed x, so there's no gap.
-        let memoryX = 95 + first.size(withAttributes: attributes).width + 8
-        let width = ceil(both ? memoryX + 37 + second.size(withAttributes: attributes).width : 95 + first.size(withAttributes: attributes).width) + 2
+        let memoryX = start + 37 + first.size(withAttributes: attributes).width + 8
+        let width = ceil(both ? memoryX + 37 + second.size(withAttributes: attributes).width : start + 37 + first.size(withAttributes: attributes).width) + 2
         statusItem.length = width + 8
         let image = NSImage(size: NSSize(width: width, height: 24), flipped: false) { _ in
-            dials[0].draw(in: NSRect(x: 0, y: 0, width: 24, height: 24))
-            dials[1].draw(in: NSRect(x: 28, y: 0, width: 24, height: 24))
-            graph.draw(in: NSRect(x: 58, y: 3, width: 32, height: 18))
-            first.draw(at: NSPoint(x: 95, y: 5), withAttributes: attributes)
+            for (index, dial) in dials.enumerated() { dial.draw(in: NSRect(x: CGFloat(index * 28), y: 0, width: 24, height: 24)) }
+            graph.draw(in: NSRect(x: start, y: 3, width: 32, height: 18))
+            first.draw(at: NSPoint(x: start + 37, y: 5), withAttributes: attributes)
             if both {
                 memoryGraph.draw(in: NSRect(x: memoryX, y: 3, width: 32, height: 18))
                 second.draw(at: NSPoint(x: memoryX + 37, y: 5), withAttributes: attributes)
@@ -157,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showHoverCard() {
         guard !panel.isVisible, let button = statusItem.button, let window = button.window,
               let screen = window.screen ?? NSScreen.main else { hoverPanel.orderOut(nil); return }
-        let providers = ["claude", "codex"].map { id in model.accountUsage.first { $0.id == id } ?? ProviderUsage(id: id, record: nil) }
+        let providers = model.accountUsage
         let hosting = NSHostingView(rootView: UsageHoverCard(providers: providers, machine: model.menuTitle))
         let size = hosting.fittingSize
         let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))

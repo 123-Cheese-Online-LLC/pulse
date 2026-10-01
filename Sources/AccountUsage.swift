@@ -11,7 +11,16 @@ struct UsageRecord: Codable {
     let windows: [UsageWindow]
     var note: String? = nil // Why there is no exact reading, e.g. no Claude Code login.
     var local: LocalTokens? = nil // Fallback when no % is available.
+    var spend: Spend? = nil // API providers report dollars instead of a %.
 }
+struct Spend: Codable {
+    let usd: Double
+    let label: String
+}
+/// Every provider the bridge can read, in display order. Claude and Codex always show.
+let providerOrder = ["claude", "codex", "gemini", "copilot", "openai-api", "anthropic-api"]
+let providerNames = ["claude": "Claude", "codex": "Codex", "gemini": "Gemini", "copilot": "Copilot",
+                     "openai-api": "OpenAI API", "anthropic-api": "Anthropic API"]
 struct LocalTokens: Codable {
     let fiveHourTokens: Int
     let weekTokens: Int
@@ -23,16 +32,31 @@ func compactTokens(_ n: Int) -> String {
 struct ProviderUsage: Identifiable {
     let id: String
     let record: UsageRecord?
-    var name: String { id == "codex" ? "Codex" : "Claude" }
+    var name: String { providerNames[id] ?? id }
+    /// Readings older than 15 minutes are never shown as current.
+    private var fresh: UsageRecord? {
+        let now = Date().timeIntervalSince1970
+        guard let record, now - record.updatedAt < 900, record.updatedAt <= now + 60 else { return nil }
+        return record
+    }
     var activeWindows: [UsageWindow] {
         let now = Date().timeIntervalSince1970
-        guard let record, now - record.updatedAt < 900, record.updatedAt <= now + 60 else { return [] }
-        return record.windows.filter { $0.usedPercent.isFinite && (0...100).contains($0.usedPercent) && $0.resetsAt > now }
+        return (fresh?.windows ?? []).filter { $0.usedPercent.isFinite && (0...100).contains($0.usedPercent) && $0.resetsAt > now }
     }
-    /// Local token counts, only while the record is fresh.
-    var localTokens: LocalTokens? {
-        guard let record, Date().timeIntervalSince1970 - record.updatedAt < 900 else { return nil }
-        return record.local
+    var localTokens: LocalTokens? { fresh?.local }
+    var spend: Spend? { fresh?.spend }
+    /// Short tile value: %, then $, then tokens.
+    var valueText: String {
+        if let limiting { return "\(Int(limiting.usedPercent))%" }
+        if let spend { return String(format: "$%.2f", spend.usd) }
+        if let localTokens { return "\(compactTokens(localTokens.fiveHourTokens))/5h" }
+        return "—"
+    }
+    /// One-line reading when there's no % to show.
+    var detailText: String? {
+        if let spend { return String(format: "$%.2f · %@", spend.usd, spend.label.lowercased()) }
+        if let localTokens { return localTokens.text }
+        return record?.note
     }
     var limiting: UsageWindow? { activeWindows.max { $0.usedPercent < $1.usedPercent } }
     var recommendation: String {
@@ -41,9 +65,7 @@ struct ProviderUsage: Identifiable {
     }
     var summary: String {
         guard let window = limiting else {
-            if let local = localTokens { return "\(name): \(local.text)" }
-            if let note = record?.note { return "\(name): \(note)" }
-            return id == "claude" ? "Waiting for Claude Code · no current usage reading" : "No current Codex usage reading"
+            return "\(name): " + (detailText ?? "no current reading")
         }
         let reset = Date(timeIntervalSince1970: window.resetsAt).formatted(date: .abbreviated, time: .shortened)
         return "\(name): \(Int(window.usedPercent))% used · \(window.label) · resets \(reset) · \(recommendation)"
@@ -58,10 +80,11 @@ final class AccountUsage {
     var writeError: String?
 
     func read() -> [ProviderUsage] {
-        ["codex", "claude"].map { name in
+        providerOrder.compactMap { name in
             let url = Self.directory.appendingPathComponent("\(name)-usage.json")
             let record = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(UsageRecord.self, from: $0) }
-            return ProviderUsage(id: name, record: record)
+            // Providers that aren't set up have no file and no tile.
+            return record != nil || name == "claude" || name == "codex" ? ProviderUsage(id: name, record: record) : nil
         }
     }
     func refreshIfNeeded() {
@@ -70,7 +93,7 @@ final class AccountUsage {
         lastRefresh = Date()
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = [script.path, "refresh"] // Codex + Claude limits
+        task.arguments = [script.path, "refresh"] // Every provider
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         do { try task.run(); process = task } catch { process = nil }
@@ -89,6 +112,26 @@ final class AccountUsage {
         NSWorkspace.shared.open(script) // .command files open in Terminal without extra permissions.
         fastUntil = Date().addingTimeInterval(300)
         lastRefresh = .distantPast
+    }
+    /// Saves (or, when empty, removes) an admin API key in the Keychain for the bridge to read.
+    /// The key goes to `security` on stdin, never on a command line, and is limited to key characters.
+    func saveKey(_ provider: String, key: String) -> Bool {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines), service = "Pulse: \(provider)-admin-key"
+        guard key.isEmpty || key.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { return false }
+        let task = Process(), input = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        task.arguments = ["-i"]
+        task.standardInput = input
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        guard (try? task.run()) != nil else { return false }
+        let command = key.isEmpty ? "delete-generic-password -s \"\(service)\"\n"
+            : "add-generic-password -U -a pulse -s \"\(service)\" -w \"\(key)\"\n"
+        input.fileHandleForWriting.write(command.data(using: .utf8)!)
+        input.fileHandleForWriting.closeFile()
+        task.waitUntilExit()
+        fastUntil = Date().addingTimeInterval(120); lastRefresh = .distantPast
+        return true
     }
     func publish(_ snapshot: Snapshot, providers: [ProviderUsage], pressure: Int, cpuHistory: [Double]) {
         let sustainedCPU = cpuHistory.count >= 10 && cpuHistory.suffix(10).allSatisfy { $0 >= 90 }
@@ -131,6 +174,8 @@ func usageDial(_ used: Double?, color: NSColor) -> NSImage {
     return image
 }
 
+/// API spend tiles reuse the company logo of the matching assistant.
+private let providerLogoID = ["openai-api": "codex", "anthropic-api": "claude"]
 private let providerLogos: [String: NSImage] = Dictionary(uniqueKeysWithValues: ["codex", "claude"].compactMap { id in
     Bundle.main.url(forResource: id, withExtension: "png").flatMap { NSImage(contentsOf: $0) }.map { (id, $0) }
 })
@@ -149,7 +194,15 @@ func providerDial(_ id: String, used: Double?) -> NSImage {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(ovalIn: NSRect(x: 5, y: 5, width: 14, height: 14)).addClip()
         // Fill the circular crop so the original square app tile cannot show.
-        providerLogos[id]?.draw(in: NSRect(x: 3, y: 3, width: 18, height: 18))
+        if let logo = providerLogos[providerLogoID[id] ?? id] {
+            logo.draw(in: NSRect(x: 3, y: 3, width: 18, height: 18))
+        } else {
+            // Tools without a bundled logo get a monochrome initial.
+            let letter = (providerNames[id] ?? id).prefix(1) as NSString
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .bold), .foregroundColor: NSColor.labelColor]
+            let size = letter.size(withAttributes: attributes)
+            letter.draw(at: NSPoint(x: 12 - size.width / 2, y: 12 - size.height / 2), withAttributes: attributes)
+        }
         NSGraphicsContext.restoreGraphicsState()
         return true
     }
