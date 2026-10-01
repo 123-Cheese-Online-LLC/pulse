@@ -195,6 +195,8 @@ def copilot():
         q=(d.get('quota_snapshots') or {}).get(key) or {}
         if q.get('unlimited') or not q.get('entitlement'): continue  # Skip quotas this plan doesn't have.
         windows.append((label,{'usedPercent':100-float(q.get('percent_remaining',100)),'resetsAt':reset}))
+    # Every GitHub account gets Copilot Free; only show it once it has actually been used.
+    if not any(w[1]['usedPercent']>0 for w in windows): return clear('copilot')
     save('copilot',normalize(windows))
 
 def gemini(now=None, root=None):
