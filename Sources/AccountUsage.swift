@@ -115,6 +115,12 @@ final class AccountUsage {
           [[ -n "$v" && "$(printf '%s\\n%s\\n' "$bestv" "$v" | sort -V | tail -1)" == "$v" ]] && { best=$c; bestv=$v; }
         done
         [[ -n "$best" ]] || { echo "Claude Code isn't installed. Get it at https://claude.com/claude-code"; exit 1; }
+        # Versions before 2.0 have no `auth login` and would open a chat instead of signing in.
+        if (( ${bestv%%.*} < 2 )); then
+          echo "Claude Code $bestv is too old to sign in from here. Update it, then click Connect again:"
+          echo "  npm install -g @anthropic-ai/claude-code"
+          exit 1
+        fi
         echo "using Claude Code $bestv"
         "$best" auth login && echo "\nDone. Pulse will show exact Claude limits within a minute. You can close this window."
         """

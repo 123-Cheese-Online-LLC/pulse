@@ -76,7 +76,10 @@ for c in $(type -ap claude) ~/.nvm/versions/node/*/bin/claude ~/.local/bin/claud
   v=$("$c" --version 2>/dev/null | awk '{print $1}') || continue
   [[ -n "$v" && "$(printf '%s\n%s\n' "$claude_v" "$v" | sort -V | tail -1)" == "$v" ]] && { claude_bin=$c; claude_v=$v; }
 done
-if [[ -n "$claude_bin" ]]; then
+if [[ -n "$claude_bin" && "${claude_v%%.*}" -lt 2 ]]; then
+  # Versions before 2.0 have no `auth login` and would open a chat instead of signing in.
+  note "Claude Code $claude_v is too old to sign in. update it (npm install -g @anthropic-ai/claude-code), then click Connect in Pulse."
+elif [[ -n "$claude_bin" ]]; then
   if ask "connect Claude for exact 5-hour and weekly limits? [Y/n]" y; then
     "$claude_bin" auth login && ok "claude connected" || note "sign-in didn't finish. connect later from Pulse (Connect next to Claude)."
   else
