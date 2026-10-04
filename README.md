@@ -33,7 +33,7 @@ To update later, run the same installer again from the `pulse` folder after `git
 
 ## Use
 
-- **Menu bar:** up to three AI usage dials, then a CPU graph and percentage (choose CPU, Memory, or both in **•••**).
+- **Menu bar:** up to three AI usage dials, then a CPU graph and percentage (choose CPU, Memory, or both in **•••**). If macOS runs out of menu bar room (a busy app, a screen-share indicator) and hides Pulse, it shrinks to the dials and CPU % so it stays visible, and tries full size again when you switch apps.
 - **Hover the menu bar** for every AI tool's limits and when they reset.
 - **Click** to open the panel:
   - CPU and memory over the last 2 minutes. Click a chart to rank apps by that metric.

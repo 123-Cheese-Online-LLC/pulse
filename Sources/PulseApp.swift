@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dialTimer: Timer?
     private var drewDials = false
     private var statusWidth: CGFloat = 0
+    // Notch fit: when macOS hides Pulse for lack of menu bar room, drop the graphs and the second readout.
+    private var compactMenu = false
+    private var lastFrontApp: String?
+    private var compactSince = Date.distantPast
     private var hoverPanel: NSPanel!
     private var hoverWork: DispatchWorkItem?
 
@@ -120,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// frameOnly: an animation frame. Redraw the image and nothing else (no hover card, no accessibility text).
     func updateStatus(frameOnly: Bool = false) {
+        if !frameOnly { fitMenuBar() }
         let providers = model.accountUsage
         // Pinned tools (max 3) become dials; everything after them shifts to fit.
         let pinned = Array(model.pinned.prefix(3))
@@ -135,12 +140,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let memoryGraph = menuGraph(isCPU: false)
         let title = model.menuTitle
         let labels = title.components(separatedBy: "  ")
-        let both = model.menuReadout == "both"
+        let both = model.menuReadout == "both" && !compactMenu
+        let graphGap: CGFloat = compactMenu ? 0 : 37 // compact: no graph, just the readout
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.labelColor]
         let first = (labels.first ?? title) as NSString, second = (labels.last ?? "MEM —") as NSString
         // Lay the memory readout right after the CPU text instead of at a fixed x, so there's no gap.
-        let memoryX = start + 37 + first.size(withAttributes: attributes).width + 8
-        let width = ceil(both ? memoryX + 37 + second.size(withAttributes: attributes).width : start + 37 + first.size(withAttributes: attributes).width) + 2
+        let memoryX = start + graphGap + first.size(withAttributes: attributes).width + 8
+        let width = ceil(both ? memoryX + 37 + second.size(withAttributes: attributes).width : start + graphGap + first.size(withAttributes: attributes).width) + 2
         // While dials move, keep the item at its widest so the menu bar never re-lays out mid-animation;
         // content is right-aligned in that space, so the CPU readout stays put and only the dial moves.
         let fullWidth = width + CGFloat(shownDials.count) * 28 - dialsWidth + (dialsWidth > 0.5 || shownDials.isEmpty ? 0 : 2)
@@ -155,8 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if size > 0.5 { dial.image.draw(in: NSRect(x: x + 12 * min(1, dial.scale) - size / 2, y: 12 - size / 2, width: size, height: size)) }
                 x += 28 * min(1, dial.scale)
             }
-            graph.draw(in: NSRect(x: start, y: 3, width: 32, height: 18))
-            first.draw(at: NSPoint(x: start + 37, y: 5), withAttributes: attributes)
+            if !self.compactMenu { graph.draw(in: NSRect(x: start, y: 3, width: 32, height: 18)) }
+            first.draw(at: NSPoint(x: start + graphGap, y: 5), withAttributes: attributes)
             if both {
                 memoryGraph.draw(in: NSRect(x: memoryX, y: 3, width: 32, height: 18))
                 second.draw(at: NSPoint(x: memoryX + 37, y: 5), withAttributes: attributes)
@@ -171,6 +177,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The hover card replaces the slow system tooltip; VoiceOver still gets the summary.
         statusItem.button?.setAccessibilityLabel(summary)
         if hoverPanel?.isVisible == true { showHoverCard() }
+    }
+
+    /// macOS hides menu bar items that don't fit beside the notch (busy app menus, a screen-share
+    /// indicator…). If that happens, go compact; when the menu bar changes, try full size again.
+    private func fitMenuBar() {
+        guard let window = statusItem.button?.window else { return }
+        let hidden = !window.occlusionState.contains(.visible)
+            || (window.screen?.auxiliaryTopRightArea).map { window.frame.minX < $0.minX - 1 } == true
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        defer { lastFrontApp = front }
+        if hidden && !compactMenu {
+            compactMenu = true
+            compactSince = Date()
+        } else if !hidden && compactMenu && (front != lastFrontApp || Date().timeIntervalSince(compactSince) > 60) {
+            compactSince = Date()
+            compactMenu = false
+            // Check the full size actually fits; if not, back to compact without waiting for the next sample.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.updateStatus() }
+        }
     }
 
     /// Starts an in/out bounce for any dial whose pin changed, and keeps leaving dials drawn until they're gone.
