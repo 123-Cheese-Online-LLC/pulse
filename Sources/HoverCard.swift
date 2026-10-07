@@ -33,14 +33,16 @@ struct UsageHoverCard: View {
         let used = window.usedPercent
         return VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Text(window.label).font(.system(size: 10))
+                Text(window.label + (window.estimated == true ? " · est." : "")).font(.system(size: 10))
                 Spacer()
-                Text("\(Int(used.rounded()))%").font(.system(size: 10, weight: .medium)).monospacedDigit()
+                Text("\(window.estimated == true ? "~" : "")\(Int(used.rounded()))%").font(.system(size: 10, weight: .medium)).monospacedDigit()
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.1))
+                    // Estimates draw lighter, so it's clear they aren't an exact reading.
                     Capsule().fill(used >= 80 ? Color.orange : Color.primary.opacity(0.7))
+                        .opacity(window.estimated == true ? 0.55 : 1)
                         .frame(width: geometry.size.width * used / 100)
                 }
             }.frame(height: 4)

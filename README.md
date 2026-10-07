@@ -48,7 +48,7 @@ Tools appear on their own once they're set up on the Mac. Nothing extra is downl
 
 | Tool | Shows | How Pulse reads it |
 |---|---|---|
-| Claude Code | 5-hour and weekly % (or tokens used) | Claude Code's login, read-only. Without a login: token counts from its local session logs |
+| Claude Code | 5-hour and weekly % | Claude Code's login, read-only. Without one, Pulse estimates (~%, marked est.) from Claude Code's local logs using the tokens-per-percent it learned from your last exact reading, and finds your open 5-hour window and its reset time |
 | Codex | 5-hour and weekly % | The Codex CLI's read-only rate-limit call |
 | GitHub Copilot | Chat, completions, premium % (once you've used it) | `gh api /copilot_internal/user` with your GitHub CLI login (unofficial endpoint) |
 | Gemini CLI | Tokens, last 5 hours and 7 days | Local session files in `~/.gemini/tmp` |

@@ -100,15 +100,18 @@ def claude_api():
             windows.append((label,{'usedPercent':raw.get('utilization'),'resetsAt':parse_time(raw.get('resets_at'))}))
     return normalize(windows)
 
-def claude_local(now=None, root=None):
-    """Tokens Claude Code used in the last 5 hours / 7 days, from its local session logs.
-    Works for desktop and Terminal sessions with no login. Only usage numbers are read."""
+FIVE_H, WEEK = 5*3600, 7*86400
+CALIBRATION = ROOT/'claude-calibration.json'
+
+def claude_events(now=None, root=None):
+    """(timestamp, tokens) for each Claude Code response in the last 8 days, from its local
+    session logs. Desktop and Terminal sessions, no login. Only usage numbers are read."""
     now=time.time() if now is None else now
     root=pathlib.Path(root) if root else pathlib.Path.home()/'.claude/projects'
-    week_start,seen,five,week=now-7*86400,set(),0,0
+    since,seen,events=now-8*86400,set(),[]
     for f in root.rglob('*.jsonl'):
         try:
-            if f.stat().st_mtime<week_start: continue  # Skip old sessions without opening them.
+            if f.stat().st_mtime<since: continue  # Skip old sessions without opening them.
             lines=open(f,errors='ignore')
         except OSError: continue
         with lines:
@@ -120,21 +123,69 @@ def claude_local(now=None, root=None):
                 u=m.get('usage') if isinstance(m,dict) else None
                 t=parse_time(d.get('timestamp'))
                 key=(m.get('id') if isinstance(m,dict) else None) or d.get('requestId')
-                if not isinstance(u,dict) or t is None or t<week_start or key in seen: continue
+                if not isinstance(u,dict) or t is None or t<since or key in seen: continue
                 seen.add(key)  # One API response can be logged on several lines.
-                n=sum(u.get(k) or 0 for k in ('input_tokens','cache_creation_input_tokens','output_tokens') if isinstance(u.get(k),int))
-                week+=n
-                if t>=now-5*3600: five+=n
-    return {'fiveHourTokens':five,'weekTokens':week}
+                events.append((t,sum(u.get(k) or 0 for k in ('input_tokens','cache_creation_input_tokens','output_tokens') if isinstance(u.get(k),int))))
+    return sorted(events)
+
+def tokens_since(events, start): return sum(n for t,n in events if t>=start)
+
+def five_hour_window(events, now):
+    """Claude's 5-hour window opens with the first message after the previous one ended.
+    Returns (start, reset) for the window that's open now, or None."""
+    start=None
+    for t,_ in events:
+        if start is None or t>=start+FIVE_H: start=t
+    return (start, start+FIVE_H) if start is not None and now<start+FIVE_H else None
+
+def claude_local(now=None, root=None, events=None):
+    """Token counts for the open 5-hour window (with its reset time) and the last 7 days."""
+    now=time.time() if now is None else now
+    events=claude_events(now,root) if events is None else events
+    window=five_hour_window(events,now)
+    data={'fiveHourTokens':tokens_since(events,now-FIVE_H),'weekTokens':tokens_since(events,now-WEEK)}
+    if window: data.update(windowTokens=tokens_since(events,window[0]),windowResetsAt=window[1])
+    return data
+
+def calibrate(windows, events, path=CALIBRATION):
+    """From an exact reading, learn how many tokens 1% of each window is, for estimates later."""
+    try: cal=json.loads(pathlib.Path(path).read_text())
+    except (OSError, ValueError): cal={}
+    for w in windows:
+        key,span={'5 hour':('five',FIVE_H),'Weekly':('week',WEEK)}.get(w['label'],(None,0))
+        if not key: continue
+        if key=='week': cal['weekResetsAt']=w['resetsAt']
+        if w['usedPercent']<3: continue  # too little use to measure reliably
+        per=tokens_since(events,w['resetsAt']-span)/w['usedPercent']
+        if per>0: cal[key]=per if not cal.get(key) else 0.5*cal[key]+0.5*per  # smooth across readings
+    pathlib.Path(path).parent.mkdir(parents=True,exist_ok=True)
+    pathlib.Path(path).write_text(json.dumps(cal))
+
+def estimate(events, now, path=CALIBRATION):
+    """Estimated % for each window, using the learned tokens-per-percent. Empty until calibrated."""
+    try: cal=json.loads(pathlib.Path(path).read_text())
+    except (OSError, ValueError): return []
+    out=[]
+    window=five_hour_window(events,now)
+    if window and cal.get('five'):
+        out.append({'label':'5 hour','usedPercent':round(min(100,tokens_since(events,window[0])/cal['five']),1),'resetsAt':window[1],'estimated':True})
+    reset=cal.get('weekResetsAt')
+    if cal.get('week') and isinstance(reset,(int,float)):
+        while reset<=now: reset+=WEEK  # weekly windows repeat on the same schedule
+        out.append({'label':'Weekly','usedPercent':round(min(100,tokens_since(events,reset-WEEK)/cal['week']),1),'resetsAt':reset,'estimated':True})
+    return out
 
 def claude_refresh():
-    data=None
+    now=time.time(); events=claude_events(now); data=None
     try: data=claude_api()
     except (OSError, ValueError, subprocess.SubprocessError): pass
-    if not data or not data['windows']:
-        # No exact % available: fall back to local token counts so Claude never shows blank.
-        data={'updatedAt':time.time(),'windows':[],'local':claude_local(),
-              'note':'Exact % needs a Claude Code login (run claude, then /login)'}
+    if data and data['windows']:
+        calibrate(data['windows'],events)
+    else:
+        # No exact % right now: estimate from Claude Code's own logs so Claude never shows blank.
+        est=estimate(events,now)
+        data={'updatedAt':now,'windows':est,'local':claude_local(now,events=events),
+              'note':'Estimated from Claude Code use · Connect for exact %' if est else 'Connect Claude for exact % · until then, tokens used'}
     save('claude',data); print(json.dumps(data))
 
 def claude():
@@ -250,9 +301,10 @@ def status(show_all=False):
         elif not d:
             if not show_all: continue
             line=reason if isinstance(reason,str) else 'not set up'
-        elif d.get('windows'): line=', '.join(f"{w['label']} {w['usedPercent']:.0f}%" for w in d['windows'])
+        elif d.get('windows'): line=', '.join(f"{w['label']} {'~' if w.get('estimated') else ''}{w['usedPercent']:.0f}%" for w in d['windows'])+(' (estimated)' if d['windows'][0].get('estimated') else '')
         elif d.get('spend'): line=f"${d['spend']['usd']:.2f} this month"
-        elif d.get('local'): line=f"{d['local']['fiveHourTokens']:,} tokens last 5h · {d['local']['weekTokens']:,} this week"
+        elif d.get('local') and d['local'].get('windowResetsAt'): line=f"{d['local']['windowTokens']:,} tokens this 5h window, resets {time.strftime('%-I:%M %p',time.localtime(d['local']['windowResetsAt']))} · {d['local']['weekTokens']:,} this week"
+        elif d.get('local'): line=f"no open 5h window · {d['local']['weekTokens']:,} tokens this week"
         else: line='no reading'
         print(f'{name:14} {line}')
 

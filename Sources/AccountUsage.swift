@@ -5,6 +5,7 @@ struct UsageWindow: Codable {
     let label: String
     let usedPercent: Double
     let resetsAt: Double
+    var estimated: Bool? = nil // From local token counts and a learned tokens-per-percent, not an exact reading.
 }
 struct UsageRecord: Codable {
     let updatedAt: Double
@@ -24,7 +25,13 @@ let providerNames = ["claude": "Claude", "codex": "Codex", "gemini": "Gemini", "
 struct LocalTokens: Codable {
     let fiveHourTokens: Int
     let weekTokens: Int
-    var text: String { "\(compactTokens(fiveHourTokens)) tokens last 5h · \(compactTokens(weekTokens)) this week" }
+    var windowTokens: Int? = nil    // tokens in Claude's open 5-hour window
+    var windowResetsAt: Double? = nil
+    var text: String {
+        guard let windowTokens, let windowResetsAt else { return "\(compactTokens(weekTokens)) tokens this week" }
+        let reset = Date(timeIntervalSince1970: windowResetsAt).formatted(date: .omitted, time: .shortened)
+        return "\(compactTokens(windowTokens)) tokens this window · resets \(reset)"
+    }
 }
 func compactTokens(_ n: Int) -> String {
     n >= 1_000_000 ? String(format: "%.1fM", Double(n) / 1_000_000) : n >= 1_000 ? "\(n / 1_000)K" : "\(n)"
@@ -47,14 +54,14 @@ struct ProviderUsage: Identifiable {
     var spend: Spend? { fresh?.spend }
     /// Short tile value: %, then $, then tokens.
     var valueText: String {
-        if let limiting { return "\(Int(limiting.usedPercent))%" }
+        if let limiting { return "\(limiting.estimated == true ? "~" : "")\(Int(limiting.usedPercent))%" }
         if let spend { return String(format: "$%.2f", spend.usd) }
-        if let localTokens { return "\(compactTokens(localTokens.fiveHourTokens))/5h" }
+        if let localTokens { return compactTokens(localTokens.windowTokens ?? localTokens.weekTokens) }
         return "—"
     }
     /// Which limit the tile's % refers to, e.g. "5h" or "week".
     var valueCaption: String? {
-        guard let label = limiting?.label else { return spend == nil && localTokens == nil ? nil : spend == nil ? nil : "month" }
+        guard let label = limiting?.label else { return spend != nil ? "month" : localTokens == nil ? nil : localTokens?.windowTokens != nil ? "tok" : "tok/wk" }
         return ["5 hour": "5h", "Weekly": "week", "Weekly Opus": "Opus wk", "Weekly Sonnet": "Sonnet wk"][label] ?? label.lowercased()
     }
     /// One-line reading when there's no % to show.
@@ -73,7 +80,7 @@ struct ProviderUsage: Identifiable {
             return "\(name): " + (detailText ?? "no current reading")
         }
         let reset = Date(timeIntervalSince1970: window.resetsAt).formatted(date: .abbreviated, time: .shortened)
-        return "\(name): \(Int(window.usedPercent))% used · \(window.label) · resets \(reset) · \(recommendation)"
+        return "\(name): \(window.estimated == true ? "~" : "")\(Int(window.usedPercent))% used\(window.estimated == true ? " (est.)" : "") · \(window.label) · resets \(reset) · \(recommendation)"
     }
 }
 

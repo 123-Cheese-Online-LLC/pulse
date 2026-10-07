@@ -25,7 +25,26 @@ class UsageTests(unittest.TestCase):
                 f.write('\n'.join([row('a',1,10),row('a',1,10),row('b',6,100),row('c',200,1000),'not json'])+'\n')
             r=b.claude_local(now,d)
         # 'a' counted once (duplicate line), cache reads ignored, 'c' is older than 7 days.
-        self.assertEqual(r,{'fiveHourTokens':20,'weekTokens':220})
+        self.assertEqual((r['fiveHourTokens'],r['weekTokens']),(20,220))
+    def test_claude_window_and_estimate(self):
+        import json, tempfile, os
+        now=1790800000; h=3600
+        # Messages 7h ago (old window), then 2h and 1h ago: the open window started 2h ago.
+        events=[(now-7*h,500),(now-2*h,100),(now-1*h,300)]
+        self.assertEqual(b.five_hour_window(events,now),(now-2*h,now+3*h))
+        self.assertEqual(b.claude_local(now,events=events)['windowTokens'],400)
+        with tempfile.TemporaryDirectory() as d:
+            cal=os.path.join(d,'cal.json')
+            self.assertEqual(b.estimate(events,now,cal),[])  # nothing learned yet
+            # An exact reading: 40% of this window used, so 1% = 10 tokens.
+            b.calibrate([{'label':'5 hour','usedPercent':40,'resetsAt':now+3*h},{'label':'Weekly','usedPercent':9,'resetsAt':now+2*86400}],events,cal)
+            est={w['label']:w for w in b.estimate(events,now,cal)}
+            self.assertEqual(est['5 hour']['usedPercent'],40.0)
+            self.assertEqual(est['5 hour']['resetsAt'],now+3*h)
+            self.assertTrue(est['5 hour']['estimated'])
+            self.assertEqual(est['Weekly']['usedPercent'],9.0)  # 900 tokens / (900/9)
+            # A week later the weekly reset rolls forward on schedule.
+            self.assertEqual(b.estimate(events,now+8*86400,cal)[-1]['resetsAt'],now+9*86400)
     def test_gemini_counts(self):
         import json, os, tempfile
         now=1790800000
