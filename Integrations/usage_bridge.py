@@ -196,7 +196,8 @@ def copilot():
         if q.get('unlimited') or not q.get('entitlement'): continue  # Skip quotas this plan doesn't have.
         windows.append((label,{'usedPercent':100-float(q.get('percent_remaining',100)),'resetsAt':reset}))
     # Every GitHub account gets Copilot Free; only show it once it has actually been used.
-    if not any(w[1]['usedPercent']>0 for w in windows): return clear('copilot')
+    if not any(w[1]['usedPercent']>0 for w in windows):
+        clear('copilot'); return 'not used yet'  # status shows why there's no tile
     save('copilot',normalize(windows))
 
 def gemini(now=None, root=None):
@@ -238,8 +239,9 @@ def status(show_all=False):
     """Self-test: run every provider and say what each one found. Prints no secrets.
     Tools that aren't set up are hidden unless show_all (status -a)."""
     for name,job in PROVIDERS.items():
+        reason=None
         try:
-            with contextlib.redirect_stdout(io.StringIO()): job()
+            with contextlib.redirect_stdout(io.StringIO()): reason=job()
             err=None
         except Exception as e: err=type(e).__name__+(f' {e.code}' if hasattr(e,'code') else '')
         try: d=json.loads((ROOT/(name+'-usage.json')).read_text())
@@ -247,7 +249,7 @@ def status(show_all=False):
         if err: line='error · '+err
         elif not d:
             if not show_all: continue
-            line='not set up'
+            line=reason if isinstance(reason,str) else 'not set up'
         elif d.get('windows'): line=', '.join(f"{w['label']} {w['usedPercent']:.0f}%" for w in d['windows'])
         elif d.get('spend'): line=f"${d['spend']['usd']:.2f} this month"
         elif d.get('local'): line=f"{d['local']['fiveHourTokens']:,} tokens last 5h · {d['local']['weekTokens']:,} this week"
