@@ -27,7 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var drewDials = false
     private var statusWidth: CGFloat = 0
     // Notch fit: when macOS hides Pulse for lack of menu bar room, drop the graphs and the second readout.
-    private var compactMenu = false
+    // 0 full · 1 no graphs, both readouts · 2 dials + first readout only
+    private var compactLevel = 0
     private var lastFrontApp: String?
     private var compactSince = Date.distantPast
     private var hoverPanel: NSPanel!
@@ -140,13 +141,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let memoryGraph = menuGraph(isCPU: false)
         let title = model.menuTitle
         let labels = title.components(separatedBy: "  ")
-        let both = model.menuReadout == "both" && !compactMenu
-        let graphGap: CGFloat = compactMenu ? 0 : 37 // compact: no graph, just the readout
+        // Decide the layout once, here; the image draws later, so it must use these values, not live state.
+        let showGraphs = compactLevel == 0
+        let both = model.menuReadout == "both" && compactLevel < 2
+        let graphGap: CGFloat = showGraphs ? 37 : 0
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.labelColor]
         let first = (labels.first ?? title) as NSString, second = (labels.last ?? "MEM —") as NSString
         // Lay the memory readout right after the CPU text instead of at a fixed x, so there's no gap.
-        let memoryX = start + graphGap + first.size(withAttributes: attributes).width + 8
-        let width = ceil(both ? memoryX + 37 + second.size(withAttributes: attributes).width : start + graphGap + first.size(withAttributes: attributes).width) + 2
+        let memoryX = start + graphGap + first.size(withAttributes: attributes).width + (showGraphs ? 8 : 12)
+        let width = ceil(both ? memoryX + graphGap + second.size(withAttributes: attributes).width : start + graphGap + first.size(withAttributes: attributes).width) + 2
         // While dials move, keep the item at its widest so the menu bar never re-lays out mid-animation;
         // content is right-aligned in that space, so the CPU readout stays put and only the dial moves.
         let fullWidth = width + CGFloat(shownDials.count) * 28 - dialsWidth + (dialsWidth > 0.5 || shownDials.isEmpty ? 0 : 2)
@@ -161,11 +164,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if size > 0.5 { dial.image.draw(in: NSRect(x: x + 12 * min(1, dial.scale) - size / 2, y: 12 - size / 2, width: size, height: size)) }
                 x += 28 * min(1, dial.scale)
             }
-            if !self.compactMenu { graph.draw(in: NSRect(x: start, y: 3, width: 32, height: 18)) }
+            if showGraphs { graph.draw(in: NSRect(x: start, y: 3, width: 32, height: 18)) }
             first.draw(at: NSPoint(x: start + graphGap, y: 5), withAttributes: attributes)
             if both {
-                memoryGraph.draw(in: NSRect(x: memoryX, y: 3, width: 32, height: 18))
-                second.draw(at: NSPoint(x: memoryX + 37, y: 5), withAttributes: attributes)
+                if showGraphs { memoryGraph.draw(in: NSRect(x: memoryX, y: 3, width: 32, height: 18)) }
+                second.draw(at: NSPoint(x: memoryX + graphGap, y: 5), withAttributes: attributes)
             }
             return true
         }
@@ -187,12 +190,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || (window.screen?.auxiliaryTopRightArea).map { window.frame.minX < $0.minX - 1 } == true
         let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         defer { lastFrontApp = front }
-        if hidden && !compactMenu {
-            compactMenu = true
+        if hidden && compactLevel < 2 {
+            // Shrink one step at a time: drop the graphs first, then the second readout.
+            compactLevel += 1
             compactSince = Date()
-        } else if !hidden && compactMenu && (front != lastFrontApp || Date().timeIntervalSince(compactSince) > 60) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.updateStatus() }
+        } else if !hidden && compactLevel > 0 && (front != lastFrontApp || Date().timeIntervalSince(compactSince) > 60) {
             compactSince = Date()
-            compactMenu = false
+            compactLevel = 0
             // Check the full size actually fits; if not, back to compact without waiting for the next sample.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.updateStatus() }
         }
