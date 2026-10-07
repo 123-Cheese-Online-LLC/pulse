@@ -469,13 +469,14 @@ private struct AddKeysView: View {
     @State private var openAI = ""
     @State private var anthropic = ""
     @State private var status: String?
+    @State private var saved: Set<String> = []
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Add AI usage").font(.system(size: 12, weight: .semibold))
             Text("Claude Code, Codex, Gemini CLI and GitHub Copilot appear automatically when installed. For API spend this month, paste an admin key. Keys are stored in your Keychain.")
                 .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            SecureField("OpenAI admin key (sk-admin-…)", text: $openAI)
-            SecureField("Anthropic admin key (sk-ant-admin…)", text: $anthropic)
+            keyField("openai", "OpenAI admin key (sk-admin-…)", $openAI)
+            keyField("anthropic", "Anthropic admin key (sk-ant-admin…)", $anthropic)
             HStack {
                 if let status { Text(status).font(.system(size: 10)).foregroundStyle(.secondary) }
                 Spacer()
@@ -484,8 +485,27 @@ private struct AddKeysView: View {
                     let saved = [("openai", openAI), ("anthropic", anthropic)].filter { !$0.1.isEmpty }.map { model.saveKey($0.0, key: $0.1) }
                     status = saved.isEmpty ? "Nothing to save" : saved.allSatisfy { $0 } ? "Saved · appears within a minute" : "That doesn't look like a key"
                     openAI = ""; anthropic = ""
+                    refresh()
                 }.controlSize(.small).keyboardShortcut(.defaultAction)
             }
         }.textFieldStyle(.roundedBorder).font(.system(size: 11)).padding(12).frame(width: 260)
+         .onAppear(perform: refresh)
     }
+
+    /// A saved key shows as "saved" with Remove; otherwise a field to paste one.
+    @ViewBuilder private func keyField(_ provider: String, _ prompt: String, _ text: Binding<String>) -> some View {
+        if saved.contains(provider) {
+            HStack {
+                Text("\(provider == "openai" ? "OpenAI" : "Anthropic") key saved").foregroundStyle(.secondary)
+                Spacer()
+                Button("Remove") {
+                    status = model.saveKey(provider, key: "") ? "Removed · tile goes within a minute" : "Couldn’t remove it"
+                    refresh()
+                }.controlSize(.small)
+            }.frame(minHeight: 22)
+        } else {
+            SecureField(prompt, text: text)
+        }
+    }
+    private func refresh() { saved = Set(["openai", "anthropic"].filter { model.hasKey($0) }) }
 }

@@ -131,6 +131,17 @@ final class AccountUsage {
         fastUntil = Date().addingTimeInterval(300)
         lastRefresh = .distantPast
     }
+    /// Whether an admin key is saved for this provider (checks the Keychain entry exists; never reads the key).
+    func hasKey(_ provider: String) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        task.arguments = ["find-generic-password", "-s", "Pulse: \(provider)-admin-key"]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        guard (try? task.run()) != nil else { return false }
+        task.waitUntilExit()
+        return task.terminationStatus == 0
+    }
     /// Saves (or, when empty, removes) an admin API key in the Keychain for the bridge to read.
     /// The key goes to `security` on stdin, never on a command line, and is limited to key characters.
     func saveKey(_ provider: String, key: String) -> Bool {

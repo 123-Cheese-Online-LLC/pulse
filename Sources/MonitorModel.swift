@@ -28,6 +28,7 @@ final class MonitorModel: ObservableObject {
         else if pinned.count < 3 { pinned.append(id) }
     }
     func saveKey(_ provider: String, key: String) -> Bool { accounts.saveKey(provider, key: key) }
+    func hasKey(_ provider: String) -> Bool { accounts.hasKey(provider) }
     var menuMetric: Metric { menuReadout == "memory" ? .memory : .cpu }
     var onUpdate: (() -> Void)?
     private let queue = DispatchQueue(label: "app.pulse.sampler", qos: .utility)
