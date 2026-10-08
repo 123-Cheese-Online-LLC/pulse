@@ -113,6 +113,7 @@ final class AccountUsage {
     /// Opens Terminal to sign Claude Code in; Pulse reads exact limits once that login exists.
     func connectClaude() {
         let script = Self.directory.appendingPathComponent("connect-claude.command")
+        let bridge = Bundle.main.url(forResource: "usage_bridge", withExtension: "py")?.path ?? ""
         // Several copies of `claude` can be installed and old ones may crash; use the newest that runs.
         let body = """
         #!/bin/zsh -l
@@ -129,7 +130,11 @@ final class AccountUsage {
           exit 1
         fi
         echo "using Claude Code $bestv"
-        "$best" auth login && echo "\nDone. Pulse will show exact Claude limits within a minute. You can close this window."
+        if "$best" auth login; then
+          # Refresh right away so the exact limits appear within seconds, not at the next 5-minute check.
+          /usr/bin/python3 "\(bridge)" claude-api >/dev/null 2>&1
+          echo "\nDone. Pulse now shows your exact Claude limits. You can close this window."
+        fi
         """
         try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         guard (try? body.write(to: script, atomically: true, encoding: .utf8)) != nil,
