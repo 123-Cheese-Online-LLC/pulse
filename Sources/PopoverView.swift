@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PopoverView: View {
     @ObservedObject var model: MonitorModel
+    @ObservedObject private var updater = Updater.shared
     var panelSize = CGSize(width: 340, height: 560)
     private var compact: Bool { panelSize.height < 500 }
     @State private var quitCandidate: AppUsage?
@@ -29,6 +30,7 @@ struct PopoverView: View {
                 }
                 accountSummary
                 if !claudeOnboardingDone && claudeNeedsConnect { claudeOnboarding }
+                if updater.state != .idle { updateRow }
             }.padding(.horizontal, 16).padding(.vertical, 10)
             Divider().opacity(0.55)
             ScrollViewReader { proxy in
@@ -60,6 +62,29 @@ struct PopoverView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
         .tint(.primary)
+    }
+
+    /// Update available / in progress / result. Plain words; the friend using this may never open Terminal.
+    private var updateRow: some View {
+        HStack(alignment: .center, spacing: 8) {
+            switch updater.state {
+            case .available:
+                Text("A new version of Pulse is ready.").font(.system(size: 11))
+                Spacer(minLength: 0)
+                Button("Update") { updater.install() }.controlSize(.small)
+            case .updating:
+                ProgressView().controlSize(.small)
+                Text("Updating… Pulse will restart in about a minute.").font(.system(size: 11))
+                Spacer(minLength: 0)
+            case .upToDate, .failed:
+                Text({ if case .failed(let why) = updater.state { return why }; return "Pulse is up to date." }())
+                    .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button { updater.dismiss() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).accessibilityLabel("Dismiss")
+            case .idle: EmptyView()
+            }
+        }.padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func messageRow(_ message: String) -> some View {
@@ -100,6 +125,7 @@ struct PopoverView: View {
                 Button(model.loginEnabled ? "✓ Launch at login" : model.loginNeedsApproval ? "Launch at login · approval required" : "Launch at login") { model.toggleLogin() }
                 Button(showInfo ? "Hide how readings work" : "How readings work") { showInfo.toggle() }
                 Button("Token usage at API prices…") { model.showTokenCost() }
+                Button("Check for updates") { updater.check(manual: true) }
                 Divider()
                 Button("Quit Pulse", role: .destructive) { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
             } label: { Image(systemName: "ellipsis.circle").font(.system(size: 16)).foregroundStyle(.secondary) }

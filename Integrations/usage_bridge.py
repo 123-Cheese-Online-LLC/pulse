@@ -339,6 +339,50 @@ def claude_spend(root=None):
                 rows.append((t,model,tok,usd))
     return sorted(rows,key=lambda r:r[0])
 
+# OpenAI USD per million tokens: (input, cached input, output); cache writes are 1.25x input.
+# From developers.openai.com/api/docs/pricing and model pages, checked 2026-10-14. Where a page
+# lists no cached rate, 10% of input (OpenAI's usual discount) is assumed.
+OPENAI_PRICES={
+    'gpt-6.1-sol':(2,0.10,10), 'gpt-6-astra':(10,1,50), 'gpt-6-sol':(2,0.20,10), 'gpt-6-luna':(0.10,0.01,0.50),
+    'gpt-5.6-sol':(4,0.40,20), 'gpt-5.6-terra':(2,0.20,12), 'gpt-5.6-luna':(0.20,0.02,1.20), 'gpt-5.5':(5,0.50,30),
+    'gpt-5.3-codex':(1.75,0.175,14), 'gpt-5.2-codex':(1.75,0.175,14),
+    'gpt-5.1-codex-max':(1.25,0.125,10), 'gpt-5-codex':(1.25,0.125,10),
+}
+
+def codex_spend(root=None):
+    """Every Codex model call in the local session logs, priced at OpenAI API rates.
+    Resumed sessions copy earlier events, so each call is keyed by (time, running total)."""
+    root=pathlib.Path(root) if root else pathlib.Path.home()/'.codex/sessions'
+    seen,rows=set(),[]
+    for f in root.rglob('*.jsonl'):
+        model,prev=None,None
+        try: lines=open(f,'rb')
+        except OSError: continue
+        with lines:
+            for line in lines:
+                if b'"turn_context"' in line:
+                    try: model=json.loads(line).get('payload',{}).get('model') or model
+                    except ValueError: pass
+                    continue
+                if b'"token_count"' not in line: continue
+                try: d=json.loads(line)
+                except ValueError: continue
+                info=(d.get('payload') or {}).get('info') or {}
+                total,last=info.get('total_token_usage'),info.get('last_token_usage')
+                t=parse_time(d.get('timestamp'))
+                if not isinstance(last,dict) or not isinstance(total,dict) or t is None: continue
+                key=(d.get('timestamp'),total.get('total_tokens'))
+                if total==prev or key in seen: continue  # repeated event, or copied from a resumed session
+                prev=total; seen.add(key)
+                num=lambda v: v if isinstance(v,int) else 0
+                cached,write=num(last.get('cached_input_tokens')),num(last.get('cache_write_input_tokens'))
+                tok={'input':max(num(last.get('input_tokens'))-cached-write,0),'write5m':write,'write1h':0,
+                     'read':cached,'output':num(last.get('output_tokens')),'searches':0}
+                p=next((OPENAI_PRICES[k] for k in sorted(OPENAI_PRICES,key=len,reverse=True) if isinstance(model,str) and model.startswith(k)),None)
+                usd=(tok['input']*p[0]+write*p[0]*1.25+cached*p[1]+tok['output']*p[2])/1e6 if p else None
+                rows.append((t,model or 'unknown',tok,usd))
+    return sorted(rows,key=lambda r:r[0])
+
 def spend_summary(rows, now=None):
     now=time.time() if now is None else now
     lt=time.localtime(now); month_start=time.mktime((lt.tm_year,lt.tm_mon,1,0,0,0,0,0,-1))
@@ -359,13 +403,19 @@ def spend_summary(rows, now=None):
             'perMonthAverage':allt['usd']/months if months>=1 else None}
 
 def tokens_report(as_json=False):
-    s=spend_summary(claude_spend())
-    if as_json: print(json.dumps(s)); return
+    claude,codex=claude_spend(),codex_spend()
+    if as_json: print(json.dumps({'claude':spend_summary(claude),'codex':spend_summary(codex)})); return
+    if claude: print_spend('Claude Code usage, priced at Anthropic API rates',spend_summary(claude))
+    if codex: print_spend('Codex usage, priced at OpenAI API rates',spend_summary(codex))
+    print('Local logs only: Claude Code and Codex on this Mac, not claude.ai or ChatGPT chats.')
+    print('Standard API rates; batch discounts and fast mode not applied. Compare "last 30 days" with your plan price.')
+
+def print_spend(title,s):
     fmt=lambda n: f"{n/1e9:.2f}B" if n>=1e9 else f"{n/1e6:.1f}M" if n>=1e6 else f"{n/1e3:.0f}K" if n>=1e3 else str(n)
     def line(label,t):
         k=t['tokens']; total=k['input']+k['write5m']+k['write1h']+k['read']+k['output']
         return f"{label:<14}{fmt(total):>8} tokens   ${t['usd']:>9,.2f}   ({t['responses']:,} responses)"
-    print('Claude Code usage, priced at API rates\n')
+    print(title+'\n')
     print(line('this month',s['thisMonth'])); print(line('last 30 days',s['last30']))
     print(line('all time',s['all'])+f"   since {time.strftime('%b %-d, %Y',time.localtime(s['since']))}")
     if s['perMonthAverage'] is not None: print(f"{'avg / month':<14}{'':>8}          ${s['perMonthAverage']:>9,.2f}")
@@ -373,9 +423,9 @@ def tokens_report(as_json=False):
     print(f"\nlast 30 days: {fmt(k['input'])} input · {fmt(k['write5m']+k['write1h'])} cache writes · {fmt(k['read'])} cache reads · {fmt(k['output'])} output")
     print('\nby model, last 30 days:')
     for model,b in sorted(s['last30']['byModel'].items(),key=lambda kv:-kv[1]['usd']):
+        if not b["tokens"]: continue
         print(f"  {model:<28}{fmt(b['tokens']):>8}   ${b['usd']:>9,.2f}"+(f"   ({b['unpriced']} unpriced)" if b['unpriced'] else ''))
-    print('\nCounts Claude Code only (Terminal and desktop app), not claude.ai chats. Standard API rates;')
-    print('batch discounts and fast mode not applied. Compare "last 30 days" with your plan price.')
+    print()
 
 PROVIDERS={'codex':codex,'claude':claude_refresh,'gemini':gemini,'copilot':copilot,'openai-api':openai_api,'anthropic-api':anthropic_api}
 

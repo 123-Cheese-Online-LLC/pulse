@@ -29,7 +29,7 @@ The installer:
 3. Asks whether to connect Claude for exact limits. This runs Claude Code's own sign-in; skip it and Pulse shows tokens used instead.
 4. Asks whether to add Pulse to Claude Code's status line. Default no; it edits your Claude settings, with a backup.
 
-To update later, run the same installer again from the `pulse` folder after `git pull`.
+Updates: Pulse checks GitHub about once a day. When there's a new version it sends one notification and shows **Update** in the panel; clicking it rebuilds Pulse on your Mac (about a minute) and restarts it. You can also use **•••** → Check for updates. Copies installed before version 1.8 can't update themselves, so reinstall them once with `git pull && ./scripts/install.sh`.
 
 ## Use
 
@@ -61,7 +61,7 @@ Check what Pulse can read on your Mac (prints no keys or tokens). Add `-a` to al
 /usr/bin/python3 ~/Applications/Pulse.app/Contents/Resources/usage_bridge.py status
 ```
 
-Deciding between a Claude plan and API billing? This adds up every Claude Code response in your local logs and prices it at standard API rates (this month, last 30 days, all time, by model). It's also in ••• → Token usage at API prices.
+Deciding between a plan and API billing? This adds up every Claude Code and Codex response in your local logs and prices it at standard API rates (this month, last 30 days, all time, by model). Codex's `codex-auto-review` model has no public price and is listed as unpriced. It's also in ••• → Token usage at API prices.
 
 ```sh
 /usr/bin/python3 ~/Applications/Pulse.app/Contents/Resources/usage_bridge.py tokens

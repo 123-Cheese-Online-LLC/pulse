@@ -73,6 +73,7 @@ final class MonitorModel: ObservableObject {
             memoryHistory.append(Double(used) / Double(snapshot.memoryTotal) * 100)
         }
         accounts.refreshIfNeeded()
+        Updater.shared.checkIfDue()
         accountUsage = accounts.read()
         accounts.publish(snapshot, providers: accountUsage, pressure: pressure, cpuHistory: cpuHistory.values)
         if let error = accounts.writeError { message = error }

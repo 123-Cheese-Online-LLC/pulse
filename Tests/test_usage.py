@@ -74,6 +74,18 @@ class UsageTests(unittest.TestCase):
         self.assertIn(None,[r[3] for r in rows])  # unknown model is unpriced, not $0
         s=b.spend_summary(rows,now=b.parse_time('2026-10-05T00:00:00Z'))
         self.assertEqual(s['all']['byModel']['mystery-model']['unpriced'],1)
+    def test_codex_spend(self):
+        import tempfile, json as j, pathlib as pl
+        ctx=j.dumps({'timestamp':'2026-10-01T00:00:00Z','type':'turn_context','payload':{'model':'gpt-6.1-sol'}})
+        ev=lambda ts,total,inp,cached,out: j.dumps({'timestamp':ts,'type':'event_msg','payload':{'type':'token_count','info':{
+            'total_token_usage':{'total_tokens':total},'last_token_usage':{'input_tokens':inp,'cached_input_tokens':cached,'output_tokens':out}}}})
+        with tempfile.TemporaryDirectory() as d:
+            a=ev('2026-10-01T00:00:01Z',3_000_000,2_000_000,1_000_000,1_000_000)
+            (pl.Path(d)/'a.jsonl').write_text('\n'.join([ctx,a,a]))  # repeated event
+            (pl.Path(d)/'b.jsonl').write_text('\n'.join([ctx,a]))  # resumed session copies it
+            rows=b.codex_spend(d)
+        self.assertEqual(len(rows),1)
+        self.assertAlmostEqual(rows[0][3],2+0.10+10)  # 1M uncached, 1M cached, 1M output
     def test_month_start(self):
         self.assertEqual(time.strftime('%Y-%m-%d %H:%M',time.gmtime(b.month_start(1790800000))),'2026-09-01 00:00')
 import time
