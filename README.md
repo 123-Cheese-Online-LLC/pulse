@@ -61,6 +61,12 @@ Check what Pulse can read on your Mac (prints no keys or tokens). Add `-a` to al
 /usr/bin/python3 ~/Applications/Pulse.app/Contents/Resources/usage_bridge.py status
 ```
 
+Deciding between a Claude plan and API billing? This adds up every Claude Code response in your local logs and prices it at standard API rates (this month, last 30 days, all time, by model). It's also in ••• → Token usage at API prices.
+
+```sh
+/usr/bin/python3 ~/Applications/Pulse.app/Contents/Resources/usage_bridge.py tokens
+```
+
 ## Privacy
 
 - Readings stay on your Mac in `~/Library/Application Support/Pulse`.

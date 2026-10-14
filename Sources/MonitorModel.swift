@@ -141,6 +141,7 @@ final class MonitorModel: ObservableObject {
         return app.processIdentifier != ProcessInfo.processInfo.processIdentifier && app.bundleIdentifier != "com.apple.finder"
     }
     func connectClaude() { accounts.connectClaude() }
+    func showTokenCost() { accounts.showTokenCost() }
     func openApp(_ usage: AppUsage) { runningApp(for: usage)?.activate() }
     /// What stopping this row would do. Apps quit normally, Finder relaunches, and background
     /// processes can be stopped only when they're yours and not part of the login session.

@@ -99,6 +99,7 @@ struct PopoverView: View {
                 Divider()
                 Button(model.loginEnabled ? "✓ Launch at login" : model.loginNeedsApproval ? "Launch at login · approval required" : "Launch at login") { model.toggleLogin() }
                 Button(showInfo ? "Hide how readings work" : "How readings work") { showInfo.toggle() }
+                Button("Token usage at API prices…") { model.showTokenCost() }
                 Divider()
                 Button("Quit Pulse", role: .destructive) { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
             } label: { Image(systemName: "ellipsis.circle").font(.system(size: 16)).foregroundStyle(.secondary) }

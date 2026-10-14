@@ -284,6 +284,99 @@ def gemini(now=None, root=None):
     if real: save('gemini',data)
     return data
 
+# ---- API-equivalent cost of Claude Code usage (pulse tokens) ----
+# USD per million tokens: (input, 5m cache write, 1h cache write, cache read, output).
+# From platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-14.
+PRICES={
+    'claude-fable-5-1':(10,12.5,20,0.25,50), 'claude-mythos-5-1':(10,12.5,20,0.25,50),
+    'claude-fable-5':(10,12.5,20,1,50), 'claude-mythos-5':(10,12.5,20,1,50),
+    'claude-opus-5-5':(4,5,8,0.20,20), 'claude-opus-5':(5,6.25,10,0.50,25),
+    'claude-opus-4-8':(5,6.25,10,0.50,25), 'claude-opus-4-7':(5,6.25,10,0.50,25),
+    'claude-opus-4-6':(5,6.25,10,0.50,25), 'claude-opus-4-5':(5,6.25,10,0.50,25),
+    'claude-opus-4-1':(15,18.75,30,1.50,75), 'claude-opus-4':(15,18.75,30,1.50,75),
+    'claude-sonnet-5-5':(2,2.5,4,0.10,10), 'claude-sonnet-5':(2,2.5,4,0.20,10),
+    'claude-sonnet-4-6':(3,3.75,6,0.30,15), 'claude-sonnet-4-5':(3,3.75,6,0.30,15), 'claude-sonnet-4':(3,3.75,6,0.30,15),
+    'claude-haiku-4-5':(1,1.25,2,0.10,5), 'claude-3-5-haiku':(0.8,1,1.6,0.08,4),
+}
+WEB_SEARCH=10/1000  # USD per search
+
+def price_for(model):
+    # Longest prefix wins, so claude-opus-4-8 isn't priced as claude-opus-4.
+    for key in sorted(PRICES,key=len,reverse=True):
+        if isinstance(model,str) and model.startswith(key): return PRICES[key]
+    return None
+
+def claude_spend(root=None):
+    """Every Claude Code response in the local logs, priced at API rates.
+    Returns [(time, model, tokens dict, usd or None)]. Usage numbers only; no message content."""
+    root=pathlib.Path(root) if root else pathlib.Path.home()/'.claude/projects'
+    seen,rows=set(),[]
+    for f in root.rglob('*.jsonl'):
+        try: lines=open(f,errors='ignore')
+        except OSError: continue
+        with lines:
+            for line in lines:
+                if '"usage"' not in line: continue
+                try: d=json.loads(line)
+                except ValueError: continue
+                m=d.get('message'); u=m.get('usage') if isinstance(m,dict) else None
+                t=parse_time(d.get('timestamp')); model=m.get('model') if isinstance(m,dict) else None
+                key=(m.get('id') if isinstance(m,dict) else None) or d.get('requestId')
+                if not isinstance(u,dict) or t is None or key in seen or model=='<synthetic>': continue
+                seen.add(key)
+                num=lambda v: v if isinstance(v,int) else 0
+                cc=u.get('cache_creation') if isinstance(u.get('cache_creation'),dict) else {}
+                w1h=num(cc.get('ephemeral_1h_input_tokens'))
+                w5m=num(cc.get('ephemeral_5m_input_tokens')) if cc else num(u.get('cache_creation_input_tokens'))
+                tok={'input':num(u.get('input_tokens')),'write5m':w5m,'write1h':w1h,
+                     'read':num(u.get('cache_read_input_tokens')),'output':num(u.get('output_tokens')),
+                     'searches':num((u.get('server_tool_use') or {}).get('web_search_requests'))}
+                p=price_for(model)
+                usd=None
+                if p:
+                    usd=(tok['input']*p[0]+tok['write5m']*p[1]+tok['write1h']*p[2]+tok['read']*p[3]+tok['output']*p[4])/1e6+tok['searches']*WEB_SEARCH
+                    if u.get('inference_geo')=='us': usd*=1.1  # US-only routing costs 1.1x
+                rows.append((t,model,tok,usd))
+    return sorted(rows,key=lambda r:r[0])
+
+def spend_summary(rows, now=None):
+    now=time.time() if now is None else now
+    lt=time.localtime(now); month_start=time.mktime((lt.tm_year,lt.tm_mon,1,0,0,0,0,0,-1))
+    def total(since):
+        sel=[r for r in rows if r[0]>=since]
+        tok={k:sum(r[2][k] for r in sel) for k in ('input','write5m','write1h','read','output','searches')}
+        by={}
+        for _,model,t,usd in sel:
+            b=by.setdefault(model,{'usd':0.0,'tokens':0,'unpriced':0})
+            b['tokens']+=t['input']+t['write5m']+t['write1h']+t['read']+t['output']
+            if usd is None: b['unpriced']+=1
+            else: b['usd']+=usd
+        return {'usd':sum(r[3] or 0 for r in sel),'tokens':tok,'responses':len(sel),'byModel':by}
+    first=rows[0][0] if rows else now
+    allt=total(0)
+    months=max((now-first)/86400/30.44,1/30.44)
+    return {'since':first,'thisMonth':total(month_start),'last30':total(now-30*86400),'all':allt,
+            'perMonthAverage':allt['usd']/months if months>=1 else None}
+
+def tokens_report(as_json=False):
+    s=spend_summary(claude_spend())
+    if as_json: print(json.dumps(s)); return
+    fmt=lambda n: f"{n/1e9:.2f}B" if n>=1e9 else f"{n/1e6:.1f}M" if n>=1e6 else f"{n/1e3:.0f}K" if n>=1e3 else str(n)
+    def line(label,t):
+        k=t['tokens']; total=k['input']+k['write5m']+k['write1h']+k['read']+k['output']
+        return f"{label:<14}{fmt(total):>8} tokens   ${t['usd']:>9,.2f}   ({t['responses']:,} responses)"
+    print('Claude Code usage, priced at API rates\n')
+    print(line('this month',s['thisMonth'])); print(line('last 30 days',s['last30']))
+    print(line('all time',s['all'])+f"   since {time.strftime('%b %-d, %Y',time.localtime(s['since']))}")
+    if s['perMonthAverage'] is not None: print(f"{'avg / month':<14}{'':>8}          ${s['perMonthAverage']:>9,.2f}")
+    k=s['last30']['tokens']
+    print(f"\nlast 30 days: {fmt(k['input'])} input · {fmt(k['write5m']+k['write1h'])} cache writes · {fmt(k['read'])} cache reads · {fmt(k['output'])} output")
+    print('\nby model, last 30 days:')
+    for model,b in sorted(s['last30']['byModel'].items(),key=lambda kv:-kv[1]['usd']):
+        print(f"  {model:<28}{fmt(b['tokens']):>8}   ${b['usd']:>9,.2f}"+(f"   ({b['unpriced']} unpriced)" if b['unpriced'] else ''))
+    print('\nCounts Claude Code only (Terminal and desktop app), not claude.ai chats. Standard API rates;')
+    print('batch discounts and fast mode not applied. Compare "last 30 days" with your plan price.')
+
 PROVIDERS={'codex':codex,'claude':claude_refresh,'gemini':gemini,'copilot':copilot,'openai-api':openai_api,'anthropic-api':anthropic_api}
 
 def status(show_all=False):
@@ -311,6 +404,7 @@ def status(show_all=False):
 if __name__=='__main__':
     mode=sys.argv[1] if len(sys.argv)>1 else ''
     if mode=='status': status('-a' in sys.argv or '--all' in sys.argv); sys.exit()
+    if mode=='tokens': tokens_report('--json' in sys.argv); sys.exit()
     # 'refresh' polls every provider; one failing must not block the others.
     jobs={'claude':[claude],'claude-api':[claude_refresh],'refresh':list(PROVIDERS.values())}.get(mode) or ([PROVIDERS[mode]] if mode in PROVIDERS else [])
     for job in jobs:

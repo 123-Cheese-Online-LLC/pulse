@@ -143,6 +143,15 @@ final class AccountUsage {
         fastUntil = Date().addingTimeInterval(300)
         lastRefresh = .distantPast
     }
+    /// Opens Terminal with Claude Code's token totals priced at API rates (for plan vs API decisions).
+    func showTokenCost() {
+        guard let bridge = Bundle.main.url(forResource: "usage_bridge", withExtension: "py")?.path else { return }
+        let script = Self.directory.appendingPathComponent("token-usage.command")
+        let body = "#!/bin/zsh\nclear\n/usr/bin/python3 '\(bridge.replacingOccurrences(of: "'", with: "'\\''"))' tokens\n"
+        guard (try? body.write(to: script, atomically: true, encoding: .utf8)) != nil,
+              (try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)) != nil else { return }
+        NSWorkspace.shared.open(script)
+    }
     /// Whether an admin key is saved for this provider (checks the Keychain entry exists; never reads the key).
     func hasKey(_ provider: String) -> Bool {
         let task = Process()

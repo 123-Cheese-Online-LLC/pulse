@@ -59,6 +59,21 @@ class UsageTests(unittest.TestCase):
             r=b.gemini(now,d)['local']
         # a: latest record wins (60+20+1); b: 6h ago, week only (56); c: too old; d: legacy .json file (11).
         self.assertEqual(r,{'fiveHourTokens':92,'weekTokens':148})
+    def test_spend_pricing(self):
+        import tempfile, json as j, pathlib as pl
+        with tempfile.TemporaryDirectory() as d:
+            rec=lambda i,model,u: j.dumps({'timestamp':'2026-10-01T00:00:00Z','message':{'id':i,'model':model,'usage':u}})
+            u={'input_tokens':1_000_000,'output_tokens':1_000_000,'cache_read_input_tokens':1_000_000,
+               'cache_creation':{'ephemeral_5m_input_tokens':1_000_000,'ephemeral_1h_input_tokens':1_000_000},
+               'server_tool_use':{'web_search_requests':100}}
+            (pl.Path(d)/'s.jsonl').write_text('\n'.join([rec('a','claude-opus-4-8-x',u),rec('a','claude-opus-4-8-x',u),
+                rec('b','<synthetic>',u),rec('c','mystery-model',{'output_tokens':5})]))
+            rows=b.claude_spend(d)
+        self.assertEqual(len(rows),2)  # duplicate id and <synthetic> skipped
+        self.assertAlmostEqual(rows[0][3] if rows[0][3] else rows[1][3],5+6.25+10+0.5+25+1)  # opus 4.8, not opus 4
+        self.assertIn(None,[r[3] for r in rows])  # unknown model is unpriced, not $0
+        s=b.spend_summary(rows,now=b.parse_time('2026-10-05T00:00:00Z'))
+        self.assertEqual(s['all']['byModel']['mystery-model']['unpriced'],1)
     def test_month_start(self):
         self.assertEqual(time.strftime('%Y-%m-%d %H:%M',time.gmtime(b.month_start(1790800000))),'2026-09-01 00:00')
 import time
