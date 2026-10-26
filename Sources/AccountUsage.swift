@@ -229,6 +229,11 @@ private let providerLogoID = ["openai-api": "codex", "anthropic-api": "claude"]
 private let providerLogos: [String: NSImage] = Dictionary(uniqueKeysWithValues: ["codex", "claude"].compactMap { id in
     Bundle.main.url(forResource: id, withExtension: "png").flatMap { NSImage(contentsOf: $0) }.map { (id, $0) }
 })
+/// Tools with their own Mac app borrow its icon from the installed copy, so no logo has to be bundled.
+private let providerAppIDs = ["cursor": "com.todesktop.230313mzl4w4u92"]
+private let appLogos: [String: NSImage] = providerAppIDs.compactMapValues { bundleID in
+    NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID).map { NSWorkspace.shared.icon(forFile: $0.path) }
+}
 
 func providerDial(_ id: String, used: Double?) -> NSImage {
     let image = NSImage(size: NSSize(width: 24, height: 24), flipped: false) { _ in
@@ -246,6 +251,8 @@ func providerDial(_ id: String, used: Double?) -> NSImage {
         // Fill the circular crop so the original square app tile cannot show.
         if let logo = providerLogos[providerLogoID[id] ?? id] {
             logo.draw(in: NSRect(x: 3, y: 3, width: 18, height: 18))
+        } else if let logo = appLogos[id] {
+            logo.draw(in: NSRect(x: 1, y: 1, width: 22, height: 22)) // App icons have a ~10% margin; scale past it.
         } else {
             // Tools without a bundled logo get a monochrome initial.
             let letter = (providerNames[id] ?? id).prefix(1) as NSString
