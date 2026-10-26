@@ -251,6 +251,30 @@ def copilot():
         clear('copilot'); return 'not used yet'  # status shows why there's no tile
     save('copilot',normalize(windows))
 
+def cursor():
+    """Cursor's monthly included usage %, using the Cursor app's own sign-in (read-only; unofficial endpoint)."""
+    import sqlite3, base64
+    db=pathlib.Path.home()/'Library/Application Support/Cursor/User/globalStorage/state.vscdb'
+    if not db.exists(): return clear('cursor')
+    try:
+        con=sqlite3.connect(f'file:{db}?mode=ro',uri=True)
+        row=con.execute("select value from ItemTable where key='cursorAuth/accessToken'").fetchone(); con.close()
+    except sqlite3.Error: return 'could not read Cursor sign-in'
+    if not row or not row[0]: clear('cursor'); return 'not signed in'
+    token=row[0]
+    try:
+        part=token.split('.')[1]; part+='='*(-len(part)%4)
+        user=json.loads(base64.urlsafe_b64decode(part))['sub'].split('|')[-1]
+    except (IndexError,KeyError,ValueError): return 'could not read Cursor sign-in'
+    req=urllib.request.Request('https://cursor.com/api/usage-summary',
+        headers={'Cookie':f'WorkosCursorSessionToken={user}%3A%3A{token}','User-Agent':'Pulse'})
+    try: d=json.load(urllib.request.urlopen(req,timeout=20))
+    except Exception: return 'Cursor sign-in expired; open Cursor to refresh it'
+    plan=(d.get('individualUsage') or {}).get('plan') or {}
+    pct=plan.get('totalPercentUsed')
+    if d.get('isUnlimited') or not isinstance(pct,(int,float)): clear('cursor'); return 'no usage limit on this plan'
+    save('cursor',normalize([('Monthly',{'usedPercent':pct,'resetsAt':parse_time(d.get('billingCycleEnd'))})]))
+
 def gemini(now=None, root=None):
     """Gemini CLI tokens in the last 5 hours / 7 days from its local session files (no login)."""
     now,real=(time.time() if now is None else now),root is None
@@ -427,7 +451,7 @@ def print_spend(title,s):
         print(f"  {model:<28}{fmt(b['tokens']):>8}   ${b['usd']:>9,.2f}"+(f"   ({b['unpriced']} unpriced)" if b['unpriced'] else ''))
     print()
 
-PROVIDERS={'codex':codex,'claude':claude_refresh,'gemini':gemini,'copilot':copilot,'openai-api':openai_api,'anthropic-api':anthropic_api}
+PROVIDERS={'codex':codex,'claude':claude_refresh,'gemini':gemini,'copilot':copilot,'cursor':cursor,'openai-api':openai_api,'anthropic-api':anthropic_api}
 
 def status(show_all=False):
     """Self-test: run every provider and say what each one found. Prints no secrets.

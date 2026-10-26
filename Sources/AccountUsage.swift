@@ -19,8 +19,8 @@ struct Spend: Codable {
     let label: String
 }
 /// Every provider the bridge can read, in display order. Claude and Codex always show.
-let providerOrder = ["claude", "codex", "gemini", "copilot", "openai-api", "anthropic-api"]
-let providerNames = ["claude": "Claude", "codex": "Codex", "gemini": "Gemini", "copilot": "Copilot",
+let providerOrder = ["claude", "codex", "gemini", "copilot", "cursor", "openai-api", "anthropic-api"]
+let providerNames = ["claude": "Claude", "codex": "Codex", "gemini": "Gemini", "copilot": "Copilot", "cursor": "Cursor",
                      "openai-api": "OpenAI API", "anthropic-api": "Anthropic API"]
 struct LocalTokens: Codable {
     let fiveHourTokens: Int
