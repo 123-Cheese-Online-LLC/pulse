@@ -235,7 +235,7 @@ struct PopoverView: View {
                 .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 7))
                 .contentShape(Rectangle())
         }.buttonStyle(.plain)
-         .help("Add API spend tracking")
+         .help("AI tools Pulse can show")
          .popover(isPresented: $showAddKeys, arrowEdge: .bottom) { AddKeysView(model: model) }
     }
 
@@ -491,19 +491,55 @@ private struct PanelGlass: NSViewRepresentable {
 }
 
 /// Admin API keys for month-to-date spend. Gemini CLI, Copilot, Claude and Codex are detected automatically.
-private struct AddKeysView: View {
+struct AddKeysView: View {
     @ObservedObject var model: MonitorModel
     @State private var openAI = ""
     @State private var anthropic = ""
     @State private var status: String?
     @State private var saved: Set<String> = []
+    @State private var showKeys = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Add AI usage").font(.system(size: 12, weight: .semibold))
-            Text("Claude Code, Codex, Gemini CLI and GitHub Copilot appear automatically when installed. For API spend this month, paste an admin key. Keys are stored in your Keychain.")
-                .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            keyField("openai", "OpenAI admin key (sk-admin-…)", $openAI)
-            keyField("anthropic", "Anthropic admin key (sk-ant-admin…)", $anthropic)
+            Text("AI tools").font(.system(size: 12, weight: .semibold))
+            Text("Pulse finds these on its own. Nothing to paste.")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+            ForEach(["claude", "codex", "cursor", "gemini", "copilot"], id: \.self) { toolRow($0) }
+            Divider().padding(.vertical, 2)
+            DisclosureGroup(isExpanded: $showKeys) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Only for companies billed through the API: an admin key shows this month's spend. Most people can skip this. Keys stay in your Keychain.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    keyField("openai", "OpenAI admin key (sk-admin-…)", $openAI)
+                    keyField("anthropic", "Anthropic admin key (sk-ant-admin…)", $anthropic)
+                    keyButtons
+                }.padding(.top, 6)
+            } label: { Text("API billing (advanced)").font(.system(size: 10)).foregroundStyle(.secondary) }
+        }.textFieldStyle(.roundedBorder).font(.system(size: 11)).padding(12).frame(width: 270)
+         .onAppear(perform: refresh)
+    }
+
+    /// One tool: a check when Pulse is reading it, otherwise what to do in plain words (with a button when one click fixes it).
+    @ViewBuilder private func toolRow(_ id: String) -> some View {
+        let reading = model.accountUsage.first { $0.id == id }.map { !$0.activeWindows.isEmpty || $0.localTokens != nil } ?? false
+        let appURL = ["cursor": "com.todesktop.230313mzl4w4u92", "codex": "com.openai.codex"][id]
+            .flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+        HStack(spacing: 6) {
+            Text(providerNames[id] ?? id).frame(width: 52, alignment: .leading)
+            if reading {
+                Label("Showing", systemImage: "checkmark").font(.system(size: 10)).foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                Text(id == "claude" ? "Sign in for exact limits" : id == "gemini" ? "Shows after you use Gemini CLI"
+                     : id == "copilot" ? "Shows after you use Copilot" : appURL == nil ? "Not installed" : "Open it and sign in")
+                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer()
+                if id == "claude" { Button("Connect") { model.connectClaude() }.controlSize(.small) }
+                else if let appURL { Button("Open") { NSWorkspace.shared.open(appURL) }.controlSize(.small) }
+            }
+        }.frame(minHeight: 22)
+    }
+
+    private var keyButtons: some View {
             HStack {
                 if let status { Text(status).font(.system(size: 10)).foregroundStyle(.secondary) }
                 Spacer()
@@ -515,8 +551,6 @@ private struct AddKeysView: View {
                     refresh()
                 }.controlSize(.small).keyboardShortcut(.defaultAction)
             }
-        }.textFieldStyle(.roundedBorder).font(.system(size: 11)).padding(12).frame(width: 260)
-         .onAppear(perform: refresh)
     }
 
     /// A saved key shows as "saved" with Remove; otherwise a field to paste one.

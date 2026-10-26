@@ -113,6 +113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                        let png = rep.representation(using: .png, properties: [:]) {
                         try png.write(to: URL(fileURLWithPath: path + ".hover.png"))
                     }
+                    // The + Add popover, drawn on its own (popovers aren't part of the panel's view).
+                    let add = NSHostingView(rootView: AddKeysView(model: self.model).background(Color(nsColor: .windowBackgroundColor)))
+                    add.frame.size = add.fittingSize
+                    if let rep = add.bitmapImageRepForCachingDisplay(in: add.bounds) {
+                        add.cacheDisplay(in: add.bounds, to: rep)
+                        try rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path + ".add.png"))
+                    }
                     let frame = self.panel.frame
                     let screen = self.panel.screen?.visibleFrame ?? .zero
                     let report = "window=\(frame)\nvisibleScreen=\(screen)\nfullyVisible=\(screen.contains(frame))\n"
