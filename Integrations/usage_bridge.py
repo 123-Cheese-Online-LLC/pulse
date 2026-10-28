@@ -266,14 +266,23 @@ def cursor():
         part=token.split('.')[1]; part+='='*(-len(part)%4)
         user=json.loads(base64.urlsafe_b64decode(part))['sub'].split('|')[-1]
     except (IndexError,KeyError,ValueError): return 'could not read Cursor sign-in'
-    req=urllib.request.Request('https://cursor.com/api/usage-summary',
-        headers={'Cookie':f'WorkosCursorSessionToken={user}%3A%3A{token}','User-Agent':'Pulse'})
+    # The dashboard's own endpoint; /api/usage-summary still reports the old monthly plan as 0%.
+    req=urllib.request.Request('https://cursor.com/api/dashboard/get-current-period-usage',data=b'{}',method='POST',
+        headers={'Cookie':f'WorkosCursorSessionToken={user}%3A%3A{token}','User-Agent':'Pulse',
+                 'Content-Type':'application/json','Origin':'https://cursor.com'})
     try: d=json.load(urllib.request.urlopen(req,timeout=20))
     except Exception: return 'Cursor sign-in expired; open Cursor to refresh it'
-    plan=(d.get('individualUsage') or {}).get('plan') or {}
-    pct=plan.get('totalPercentUsed')
-    if d.get('isUnlimited') or not isinstance(pct,(int,float)): clear('cursor'); return 'no usage limit on this plan'
-    save('cursor',normalize([('Monthly',{'usedPercent':pct,'resetsAt':parse_time(d.get('billingCycleEnd'))})]))
+    window=cursor_window(d)
+    if not window: clear('cursor'); return 'no usage limit on this plan'
+    save('cursor',normalize([window]))
+
+def cursor_window(d):
+    """(label, window) from Cursor's current-period usage; the period length decides weekly vs monthly."""
+    pct=(d.get('planUsage') or {}).get('totalPercentUsed')
+    try: start,end=float(d['billingCycleStart'])/1000,float(d['billingCycleEnd'])/1000
+    except (KeyError,TypeError,ValueError): return None
+    if not isinstance(pct,(int,float)) or d.get('enabled') is False: return None
+    return ('Weekly' if end-start<10*86400 else 'Monthly',{'usedPercent':pct,'resetsAt':end})
 
 def gemini(now=None, root=None):
     """Gemini CLI tokens in the last 5 hours / 7 days from its local session files (no login)."""

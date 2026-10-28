@@ -86,6 +86,10 @@ class UsageTests(unittest.TestCase):
             rows=b.codex_spend(d)
         self.assertEqual(len(rows),1)
         self.assertAlmostEqual(rows[0][3],2+0.10+10)  # 1M uncached, 1M cached, 1M output
+    def test_cursor_window(self):
+        d={'billingCycleStart':'1792942479698','billingCycleEnd':'1793547279698','enabled':True,'planUsage':{'totalPercentUsed':12.6}}
+        self.assertEqual(b.cursor_window(d),('Weekly',{'usedPercent':12.6,'resetsAt':1793547279.698}))
+        self.assertIsNone(b.cursor_window({'planUsage':{}}))
     def test_month_start(self):
         self.assertEqual(time.strftime('%Y-%m-%d %H:%M',time.gmtime(b.month_start(1790800000))),'2026-09-01 00:00')
 import time
