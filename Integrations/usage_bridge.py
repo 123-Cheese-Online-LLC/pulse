@@ -265,13 +265,15 @@ def cursor():
     try:
         part=token.split('.')[1]; part+='='*(-len(part)%4)
         user=json.loads(base64.urlsafe_b64decode(part))['sub'].split('|')[-1]
-    except (IndexError,KeyError,ValueError): return 'could not read Cursor sign-in'
+    except (IndexError,KeyError,ValueError): clear('cursor'); return "can't read Cursor's sign-in (Cursor changed it in Nov 2026)"
     # The dashboard's own endpoint; /api/usage-summary still reports the old monthly plan as 0%.
     req=urllib.request.Request('https://cursor.com/api/dashboard/get-current-period-usage',data=b'{}',method='POST',
         headers={'Cookie':f'WorkosCursorSessionToken={user}%3A%3A{token}','User-Agent':'Pulse',
                  'Content-Type':'application/json','Origin':'https://cursor.com'})
     try: d=json.load(urllib.request.urlopen(req,timeout=20))
-    except Exception: return 'Cursor sign-in expired; open Cursor to refresh it'
+    except Exception:
+        # Since Nov 2026 Cursor's saved sign-in no longer works outside Cursor; drop the old reading rather than show it.
+        clear('cursor'); return "can't read Cursor's sign-in (Cursor changed it in Nov 2026)"
     window=cursor_window(d)
     if not window: clear('cursor'); return 'no usage limit on this plan'
     save('cursor',normalize([window]))

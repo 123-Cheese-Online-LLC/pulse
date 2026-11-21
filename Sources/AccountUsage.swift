@@ -239,6 +239,7 @@ func providerDial(_ id: String, used: Double?) -> NSImage {
     let image = NSImage(size: NSSize(width: 24, height: 24), flipped: false) { _ in
         let ring = NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 20, height: 20))
         ring.lineWidth = 1.8
+        if used == nil { ring.setLineDash([2, 2.4], count: 2, phase: 0) } // No reading: dashed, so it never looks like 0%.
         NSColor.secondaryLabelColor.withAlphaComponent(0.3).setStroke(); ring.stroke()
         if let used {
             let arc = NSBezierPath()
