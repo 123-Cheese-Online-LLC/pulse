@@ -8,7 +8,7 @@ xcrun swiftc -O -whole-module-optimization -swift-version 5 -target arm64-apple-
   -import-objc-header Sources/MonitorBridge.h \
   Sources/Metrics.swift Sources/PanelLayout.swift Sources/AccountUsage.swift Sources/Sampler.swift Sources/MonitorModel.swift Sources/PopoverView.swift Sources/HoverCard.swift Sources/Updater.swift Sources/PulseApp.swift \
   build.noindex/MonitorBridge.o -o build.noindex/Pulse.app/Contents/MacOS/Pulse \
-  -framework AppKit -framework SwiftUI -framework ServiceManagement -framework UserNotifications
+  -framework AppKit -framework SwiftUI -framework ServiceManagement -framework UserNotifications -framework Security
 # The commit this build comes from, so the app can tell when GitHub has a newer one.
 commit=${PULSE_COMMIT:-$(git rev-parse HEAD 2>/dev/null || true)}
 [[ $commit =~ ^[0-9a-f]{40}$ ]] || commit=""

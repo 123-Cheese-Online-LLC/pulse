@@ -262,6 +262,14 @@ def cursor():
     except sqlite3.Error: return 'could not read Cursor sign-in'
     if not row or not row[0]: clear('cursor'); return 'not signed in'
     token=row[0]
+    if token.startswith('cursor-safe-storage:'):
+        # Since Nov 2026 Cursor encrypts its sign-in with Electron safeStorage (key in Cursor's Keychain entry).
+        # Pulse passes that key on stdin only after you click Connect in + Add; it is never stored.
+        if not CURSOR_KEY:
+            # Only the app has the key; a Terminal run keeps the app's last reading (it goes stale on its own).
+            return None if (ROOT/'cursor-usage.json').exists() else 'needs Connect in Pulse → + Add (Cursor encrypts its sign-in now)'
+        token=cursor_decrypt(token,CURSOR_KEY)
+        if not token: clear('cursor'); return "couldn't unlock Cursor's sign-in"
     try:
         part=token.split('.')[1]; part+='='*(-len(part)%4)
         user=json.loads(base64.urlsafe_b64decode(part))['sub'].split('|')[-1]
@@ -277,6 +285,19 @@ def cursor():
     window=cursor_window(d)
     if not window: clear('cursor'); return 'no usage limit on this plan'
     save('cursor',normalize([window]))
+
+CURSOR_KEY=None  # Cursor Safe Storage password, given on stdin by the app for one refresh
+
+def cursor_decrypt(value,password):
+    """Electron safeStorage 'v10' on macOS: AES-128-CBC, key PBKDF2-SHA1(password, 'saltysalt', 1003), IV of spaces."""
+    import base64, hashlib
+    if not password: return None
+    try: blob=base64.b64decode(value.split(':',2)[2])
+    except (IndexError,ValueError): return None
+    if blob[:3]!=b'v10': return None
+    key=hashlib.pbkdf2_hmac('sha1',password.encode(),b'saltysalt',1003,16)
+    out=subprocess.run(['/usr/bin/openssl','enc','-d','-aes-128-cbc','-K',key.hex(),'-iv','20'*16],input=blob[3:],capture_output=True,timeout=10)
+    return out.stdout.decode(errors='ignore').strip() if out.returncode==0 else None
 
 def cursor_window(d):
     """(label, window) from Cursor's current-period usage; the period length decides weekly vs monthly."""
@@ -490,6 +511,8 @@ if __name__=='__main__':
     mode=sys.argv[1] if len(sys.argv)>1 else ''
     if mode=='status': status('-a' in sys.argv or '--all' in sys.argv); sys.exit()
     if mode=='tokens': tokens_report('--json' in sys.argv); sys.exit()
+    if mode in ('refresh','cursor') and not sys.stdin.isatty():
+        with contextlib.suppress(ValueError): CURSOR_KEY=(json.loads(sys.stdin.read() or '{}').get('cursorKey') or None)
     # 'refresh' polls every provider; one failing must not block the others.
     jobs={'claude':[claude],'claude-api':[claude_refresh],'refresh':list(PROVIDERS.values())}.get(mode) or ([PROVIDERS[mode]] if mode in PROVIDERS else [])
     for job in jobs:

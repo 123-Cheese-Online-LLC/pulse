@@ -143,6 +143,7 @@ final class MonitorModel: ObservableObject {
     }
     func connectClaude() { accounts.connectClaude() }
     func showTokenCost() { accounts.showTokenCost() }
+    func connectCursor() { accounts.connectCursor() }
     func openApp(_ usage: AppUsage) { runningApp(for: usage)?.activate() }
     /// What stopping this row would do. Apps quit normally, Finder relaunches, and background
     /// processes can be stopped only when they're yours and not part of the login session.

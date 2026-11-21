@@ -90,6 +90,14 @@ class UsageTests(unittest.TestCase):
         d={'billingCycleStart':'1792942479698','billingCycleEnd':'1793547279698','enabled':True,'planUsage':{'totalPercentUsed':12.6}}
         self.assertEqual(b.cursor_window(d),('Weekly',{'usedPercent':12.6,'resetsAt':1793547279.698}))
         self.assertIsNone(b.cursor_window({'planUsage':{}}))
+    def test_cursor_decrypt(self):
+        import hashlib, base64, subprocess
+        key=hashlib.pbkdf2_hmac('sha1',b'pw',b'saltysalt',1003,16)
+        enc=subprocess.run(['/usr/bin/openssl','enc','-aes-128-cbc','-K',key.hex(),'-iv','20'*16],input=b'a.b.c',capture_output=True).stdout
+        value='cursor-safe-storage:v1:'+base64.b64encode(b'v10'+enc).decode()
+        self.assertEqual(b.cursor_decrypt(value,'pw'),'a.b.c')
+        self.assertIsNone(b.cursor_decrypt(value,None))
+        self.assertIsNone(b.cursor_decrypt(value,'wrong'))
     def test_month_start(self):
         self.assertEqual(time.strftime('%Y-%m-%d %H:%M',time.gmtime(b.month_start(1790800000))),'2026-09-01 00:00')
 import time

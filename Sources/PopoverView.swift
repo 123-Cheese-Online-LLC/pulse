@@ -530,11 +530,12 @@ struct AddKeysView: View {
                 Spacer()
             } else {
                 Text(id == "claude" ? "Sign in for exact limits" : id == "gemini" ? "Shows after you use Gemini CLI"
-                     : id == "copilot" ? "Shows after you use Copilot" : id == "cursor" && appURL != nil ? "Can't read since Cursor update" : appURL == nil ? "Not installed" : "Open it and sign in")
+                     : id == "copilot" ? "Shows after you use Copilot" : id == "cursor" && appURL != nil ? "Connect to read your limit" : appURL == nil ? "Not installed" : "Open it and sign in")
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
                 if id == "claude" { Button("Connect") { model.connectClaude() }.controlSize(.small) }
-                else if let appURL, id != "cursor" { Button("Open") { NSWorkspace.shared.open(appURL) }.controlSize(.small) }
+                else if id == "cursor", appURL != nil { Button("Connect") { model.connectCursor() }.controlSize(.small).help("macOS will ask to let Pulse use Cursor's Keychain entry. Choose Always Allow.") }
+                else if let appURL { Button("Open") { NSWorkspace.shared.open(appURL) }.controlSize(.small) }
             }
         }.frame(minHeight: 22)
     }

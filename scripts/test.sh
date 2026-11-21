@@ -8,5 +8,5 @@ xcrun clang -O2 Tests/bridge_test.c Sources/MonitorBridge.c -o build.noindex/bri
 build.noindex/bridge-tests
 python3 Tests/test_usage.py
 xcrun clang -O2 -c Sources/MonitorBridge.c -o build.noindex/MonitorBridge-test.o
-xcrun swiftc -module-cache-path build.noindex/module-cache -import-objc-header Sources/MonitorBridge.h Sources/Metrics.swift Sources/Sampler.swift Sources/AccountUsage.swift Tests/AccountUsageTests.swift build.noindex/MonitorBridge-test.o -o build.noindex/account-tests
+xcrun swiftc -module-cache-path build.noindex/module-cache -import-objc-header Sources/MonitorBridge.h Sources/Metrics.swift Sources/Sampler.swift Sources/AccountUsage.swift Tests/AccountUsageTests.swift build.noindex/MonitorBridge-test.o -framework Security -o build.noindex/account-tests
 build.noindex/account-tests

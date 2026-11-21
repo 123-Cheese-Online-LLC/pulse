@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Security
 
 struct UsageWindow: Codable {
     let label: String
@@ -103,12 +104,36 @@ final class AccountUsage {
         guard Date().timeIntervalSince(lastRefresh) >= (Date() < fastUntil ? 30 : 300), process?.isRunning != true,
               let script = Bundle.main.url(forResource: "usage_bridge", withExtension: "py") else { return }
         lastRefresh = Date()
-        let task = Process()
+        let task = Process(), input = Pipe()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         task.arguments = [script.path, "refresh"] // Every provider
+        task.standardInput = input
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
-        do { try task.run(); process = task } catch { process = nil }
+        do { try task.run(); process = task } catch { process = nil; return }
+        // Cursor's key goes over stdin for this one run (never argv, env or disk), and only after Connect.
+        // The Keychain read can wait on a macOS prompt, so it happens off the main thread.
+        let connected = UserDefaults.standard.bool(forKey: "cursorConnected")
+        DispatchQueue.global(qos: .utility).async {
+            let key = connected ? Self.cursorKey() : nil
+            let body = (try? JSONSerialization.data(withJSONObject: key.map { ["cursorKey": $0] } ?? [:])) ?? Data()
+            input.fileHandleForWriting.write(body)
+            try? input.fileHandleForWriting.close()
+        }
+    }
+    /// Cursor's "Cursor Safe Storage" Keychain password. macOS asks you the first time (choose Always Allow).
+    static func cursorKey() -> String? {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "Cursor Safe Storage",
+                                    kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    /// Turns on Cursor reading and refreshes right away, so the Keychain prompt appears while you're looking.
+    func connectCursor() {
+        UserDefaults.standard.set(true, forKey: "cursorConnected")
+        fastUntil = Date().addingTimeInterval(120); lastRefresh = .distantPast
+        refreshIfNeeded()
     }
     /// Opens Terminal to sign Claude Code in; Pulse reads exact limits once that login exists.
     func connectClaude() {
