@@ -115,13 +115,27 @@ final class AccountUsage {
         // The Keychain read can wait on a macOS prompt, so it happens off the main thread.
         let connected = UserDefaults.standard.bool(forKey: "cursorConnected")
         DispatchQueue.global(qos: .utility).async {
-            let key = connected ? Self.cursorKey() : nil
+            let key = connected ? Self.cachedCursorKey() : nil
             let body = (try? JSONSerialization.data(withJSONObject: key.map { ["cursorKey": $0] } ?? [:])) ?? Data()
             input.fileHandleForWriting.write(body)
             try? input.fileHandleForWriting.close()
         }
     }
-    /// Cursor's "Cursor Safe Storage" Keychain password. macOS asks you the first time (choose Always Allow).
+    /// Asked for at most once per launch: macOS may prompt each time Pulse reads another app's Keychain item,
+    /// so the key is kept in memory. If you cancel the prompt, Cursor is disconnected rather than asked again.
+    private static var cursorKeyCache: String?
+    private static var cursorKeyAsked = false
+    private static let cursorKeyLock = NSLock()
+    static func cachedCursorKey() -> String? {
+        cursorKeyLock.lock(); defer { cursorKeyLock.unlock() }
+        if !cursorKeyAsked {
+            cursorKeyAsked = true
+            cursorKeyCache = cursorKey()
+            if cursorKeyCache == nil { UserDefaults.standard.set(false, forKey: "cursorConnected") }
+        }
+        return cursorKeyCache
+    }
+    /// Cursor's "Cursor Safe Storage" Keychain password.
     static func cursorKey() -> String? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "Cursor Safe Storage",
                                     kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
@@ -132,6 +146,7 @@ final class AccountUsage {
     /// Turns on Cursor reading and refreshes right away, so the Keychain prompt appears while you're looking.
     func connectCursor() {
         UserDefaults.standard.set(true, forKey: "cursorConnected")
+        Self.cursorKeyLock.lock(); Self.cursorKeyAsked = false; Self.cursorKeyLock.unlock() // Connect asks again
         fastUntil = Date().addingTimeInterval(120); lastRefresh = .distantPast
         refreshIfNeeded()
     }
