@@ -123,6 +123,7 @@ struct PopoverView: View {
                 }
                 Divider()
                 Button(model.loginEnabled ? "✓ Launch at login" : model.loginNeedsApproval ? "Launch at login · approval required" : "Launch at login") { model.toggleLogin() }
+                Button(model.showUnits ? "✓ Show cores and GB" : "Show cores and GB") { model.showUnits.toggle() }
                 Button(showInfo ? "Hide how readings work" : "How readings work") { showInfo.toggle() }
                 Button("Token usage at API prices…") { model.showTokenCost() }
                 Button("Check for updates") { updater.check(manual: true) }
@@ -137,7 +138,10 @@ struct PopoverView: View {
     private func resourceChart(_ metric: MonitorModel.Metric) -> some View {
         let cpu = metric == .cpu
         let values = cpu ? model.cpuHistory.values : model.memoryHistory.values
-        let value = values.last.map { "\(Int($0.rounded()))%" } ?? "—"
+        // Units mode: the same reading as cores or GB, with the ceiling beside it ("3.1 of 10 cores").
+        let total = cpu ? Double(model.cores) : model.memoryTotalGB
+        let value = values.last.map { model.showUnits ? String(format: "%.1f", $0 / 100 * total) : "\(Int($0.rounded()))%" } ?? "—"
+        let ceiling = model.showUnits ? (cpu ? "of \(model.cores) cores" : "of \(Int(total.rounded())) GB") : nil
         return Button { model.selectedMetric = metric } label: {
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
@@ -146,14 +150,18 @@ struct PopoverView: View {
                     Spacer(minLength: 0)
                     if model.selectedMetric == metric { SelectedPulse(color: cpu ? .teal : .blue) }
                 }.foregroundStyle(.secondary)
-                Text(value).font(.system(size: 24, weight: .medium)).monospacedDigit()
-                Sparkline(values: values, isCPU: cpu, replay: model.panelOpens).id(model.panelOpens).frame(height: compact ? 32 : 44)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(value).font(.system(size: 24, weight: .medium)).monospacedDigit()
+                    if let ceiling { Text(ceiling).font(.system(size: 10)).foregroundStyle(.secondary) }
+                }
+                Sparkline(values: values, isCPU: cpu, replay: model.panelOpens, pressure: cpu ? 0 : model.pressure,
+                          top: model.showUnits ? (cpu ? "\(model.cores)" : "\(Int(total.rounded()))G") : nil).id(model.panelOpens).frame(height: compact ? 32 : 44)
                 Text(cpu ? "Whole CPU · last 2 min" : "Pressure: \(model.pressureText)")
                     .font(.system(size: 9)).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
         }.buttonStyle(.plain)
          .help(cpu ? "Show apps ranked by CPU" : "Show apps ranked by memory")
-         .accessibilityLabel("\(cpu ? "CPU" : "Memory"), \(value). Show apps using the most.")
+         .accessibilityLabel("\(cpu ? "CPU" : "Memory"), \(value) \(ceiling ?? ""). Show apps using the most.")
     }
 
     private func stat(_ title: String, value: String) -> some View {
@@ -387,9 +395,14 @@ private struct Sparkline: View {
     let values: [Double]
     let isCPU: Bool
     var replay = 0
+    var pressure = 0      // memory pressure: 2 = warning, 4 = critical
+    var top: String? = nil // units mode: the ceiling label (cores or GB) instead of 100%
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var progress: CGFloat = 0
-    private var color: Color { isCPU ? ((values.last ?? 0) >= 85 ? .orange : .teal) : .blue }
+    /// CPU goes orange at 85%. Memory is judged by pressure, not %: macOS keeps RAM full on purpose.
+    private var color: Color {
+        isCPU ? ((values.last ?? 0) >= 85 ? .orange : .teal) : pressure == 4 ? .red : pressure == 2 ? .orange : .blue
+    }
     var body: some View {
         HStack(spacing: 4) {
             scale.frame(width: 24)
@@ -411,9 +424,16 @@ private struct Sparkline: View {
         GeometryReader { geometry in
             ForEach([100, 50, 0], id: \.self) { (percent: Int) in
                 let y: CGFloat = 3 + CGFloat(100 - percent) / 100 * (geometry.size.height - 6)
-                Text(percent == 0 ? "0" : "\(percent)%").position(x: geometry.size.width / 2, y: y)
+                Text(label(percent)).position(x: geometry.size.width / 2, y: y)
             }
         }
+    }
+
+    private func label(_ percent: Int) -> String {
+        guard percent != 0 else { return "0" }
+        guard let top, let n = Double(top.filter { $0.isNumber || $0 == "." }) else { return "\(percent)%" }
+        let suffix = top.hasSuffix("G") ? "G" : ""
+        return percent == 100 ? top : "\(n / 2 == (n / 2).rounded() ? String(Int(n / 2)) : String(format: "%.1f", n / 2))\(suffix)"
     }
 
     private var plot: some View {

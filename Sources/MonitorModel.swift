@@ -19,6 +19,12 @@ final class MonitorModel: ObservableObject {
     @Published var menuReadout: String = UserDefaults.standard.string(forKey: "menuReadout") ?? "cpu" {
         didSet { UserDefaults.standard.set(menuReadout, forKey: "menuReadout"); onUpdate?() }
     }
+    /// Panel charts in real units (cores, GB) instead of percent, so you can see where the ceiling is.
+    @Published var showUnits = UserDefaults.standard.bool(forKey: "showUnits") {
+        didSet { UserDefaults.standard.set(showUnits, forKey: "showUnits") }
+    }
+    let cores = ProcessInfo.processInfo.activeProcessorCount
+    var memoryTotalGB: Double { Double(snapshot?.memoryTotal ?? ProcessInfo.processInfo.physicalMemory) / 1_073_741_824 }
     /// Up to three providers shown as dials in the menu bar.
     @Published var pinned: [String] = UserDefaults.standard.stringArray(forKey: "pinnedProviders") ?? ["claude", "codex"] {
         didSet { UserDefaults.standard.set(pinned, forKey: "pinnedProviders"); onUpdate?() }
